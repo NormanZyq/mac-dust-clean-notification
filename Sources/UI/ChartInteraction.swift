@@ -251,6 +251,50 @@ struct HoverEngine<DataPoint: Identifiable> {
     }
 }
 
+// MARK: - Axis scaling helpers
+
+func paddedAxisDomain(
+    values: [Double],
+    fallback: ClosedRange<Double>,
+    minSpan: Double,
+    paddingFraction: Double = 0.12,
+    clampLowerToZero: Bool = false
+) -> ClosedRange<Double> {
+    let finiteValues = values.filter { $0.isFinite }
+    guard let minValue = finiteValues.min(), let maxValue = finiteValues.max() else {
+        return fallback
+    }
+
+    let span = maxValue - minValue
+    let lower: Double
+    let upper: Double
+
+    if span < minSpan {
+        let center = (minValue + maxValue) / 2
+        lower = center - minSpan / 2
+        upper = center + minSpan / 2
+    } else {
+        let padding = span * paddingFraction
+        lower = minValue - padding
+        upper = maxValue + padding
+    }
+
+    let clampedLower = clampLowerToZero ? max(0, lower) : lower
+    if clampedLower < upper {
+        return clampedLower...upper
+    }
+    return fallback
+}
+
+func mapValue(_ value: Double, from source: ClosedRange<Double>, to target: ClosedRange<Double>) -> Double {
+    let sourceSpan = source.upperBound - source.lowerBound
+    guard sourceSpan != 0 else {
+        return (target.lowerBound + target.upperBound) / 2
+    }
+    let ratio = (value - source.lowerBound) / sourceSpan
+    return target.lowerBound + ratio * (target.upperBound - target.lowerBound)
+}
+
 // MARK: - ChartHoverState
 //
 // Mouse-move events can arrive far faster than the UI needs to redraw.
@@ -432,13 +476,14 @@ struct InteractiveChart<DataPoint: Identifiable, Content: ChartContent>: View {
                                 proxy: proxy
                             ))
                             .offset(y: 4)
-                            .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
                             .allowsHitTesting(false)
                         }
                     }
             }
         }
-        .animation(.easeOut(duration: 0.12), value: hover.hoveredIndex)
+        .transaction { transaction in
+            transaction.animation = nil
+        }
     }
 
     /// Keep the tooltip on-screen by clamping its X position relative
@@ -460,9 +505,9 @@ struct InteractiveChart<DataPoint: Identifiable, Content: ChartContent>: View {
 // A Chart that shows two metrics with different units on the same
 // X axis. The left Y axis is in the primary unit (e.g. °C), the
 // right Y axis is in the secondary unit (e.g. RPM). Both data
-// series are normalized to a shared internal scale of 0–100 so
-// they share the same plot area, but the axis labels render the
-// real units at each tick.
+// secondary series are mapped into the primary axis domain so they
+// share the same plot area, while the trailing axis labels render
+// the secondary values in their real units.
 
 struct DualAxisChart<DataPoint: Identifiable, Content: ChartContent>: View {
     let data: [DataPoint]
@@ -471,8 +516,8 @@ struct DualAxisChart<DataPoint: Identifiable, Content: ChartContent>: View {
     let dateLabel: (DataPoint) -> (header: String, sub: String?)
     let primaryAxisLabel: String
     let secondaryAxisLabel: String
-    let primaryMax: Double
-    let secondaryMax: Double
+    let primaryDomain: ClosedRange<Double>
+    let secondaryDomain: ClosedRange<Double>
     let chartContent: () -> Content
 
     init(
@@ -481,9 +526,9 @@ struct DualAxisChart<DataPoint: Identifiable, Content: ChartContent>: View {
         rowsForPoint: @escaping (DataPoint) -> [HoverRow],
         dateLabel: @escaping (DataPoint) -> (header: String, sub: String?),
         primaryAxisLabel: String,
-        primaryMax: Double,
+        primaryDomain: ClosedRange<Double>,
         secondaryAxisLabel: String,
-        secondaryMax: Double,
+        secondaryDomain: ClosedRange<Double>,
         @ChartContentBuilder chartContent: @escaping () -> Content
     ) {
         self.data = data
@@ -492,12 +537,11 @@ struct DualAxisChart<DataPoint: Identifiable, Content: ChartContent>: View {
         self.dateLabel = dateLabel
         self.primaryAxisLabel = primaryAxisLabel
         self.secondaryAxisLabel = secondaryAxisLabel
-        self.primaryMax = primaryMax
-        self.secondaryMax = secondaryMax
+        self.primaryDomain = primaryDomain
+        self.secondaryDomain = secondaryDomain
         self.chartContent = chartContent
     }
 
-    private let normalizedMax: Double = 100
     private let cardWidth: CGFloat = 188
     private let edgePad: CGFloat = 8
 
@@ -523,14 +567,14 @@ struct DualAxisChart<DataPoint: Identifiable, Content: ChartContent>: View {
                 }
             }
         }
-        .chartYScale(domain: 0...normalizedMax)
+        .chartYScale(domain: primaryDomain.lowerBound...primaryDomain.upperBound)
         .chartYAxis {
             AxisMarks(position: .leading) { value in
                 AxisGridLine()
                 AxisTick()
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
-                        Text("\(Int(v))")
+                        Text(formatAxisValue(v))
                             .font(.caption2)
                     }
                 }
@@ -538,9 +582,8 @@ struct DualAxisChart<DataPoint: Identifiable, Content: ChartContent>: View {
             AxisMarks(position: .trailing) { value in
                 AxisValueLabel {
                     if let v = value.as(Double.self) {
-                        let raw = v / normalizedMax * secondaryMax
-                        let rounded = niceTickValue(raw)
-                        Text("\(Int(rounded))")
+                        let raw = mapValue(v, from: primaryDomain, to: secondaryDomain)
+                        Text(formatAxisValue(raw))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -614,13 +657,14 @@ struct DualAxisChart<DataPoint: Identifiable, Content: ChartContent>: View {
                                 proxy: proxy
                             ))
                             .offset(y: 4)
-                            .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
                             .allowsHitTesting(false)
                         }
                     }
             }
         }
-        .animation(.easeOut(duration: 0.12), value: hover.hoveredIndex)
+        .transaction { transaction in
+            transaction.animation = nil
+        }
     }
 
     /// Keep the tooltip on-screen. Centered on the snapped data
@@ -636,16 +680,12 @@ struct DualAxisChart<DataPoint: Identifiable, Content: ChartContent>: View {
         return x - cardWidth / 2
     }
 
-    /// Snap a raw secondary value to a "nice" tick number.
-    private func niceTickValue(_ raw: Double) -> Double {
-        let step: Double
-        switch secondaryMax {
-        case ..<2000:    step = 500
-        case ..<5000:    step = 1000
-        case ..<10000:   step = 2000
-        default:         step = 5000
+    private func formatAxisValue(_ value: Double) -> String {
+        let absValue = abs(value)
+        if absValue >= 100 || value.rounded() == value {
+            return "\(Int(value.rounded()))"
         }
-        return (raw / step).rounded() * step
+        return String(format: "%.1f", value)
     }
 }
 

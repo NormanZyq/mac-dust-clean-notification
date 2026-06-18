@@ -82,6 +82,32 @@ struct OverviewView: View {
         }
     }
 
+    private func overviewPrimaryDomain(_ data: [HourlyStats]) -> ClosedRange<Double> {
+        var values: [Double] = []
+        if sparkConfig.showCPUTemp {
+            values += data.compactMap(\.cpuTempMin)
+            values += data.compactMap(\.cpuTempAvg)
+            values += data.compactMap(\.cpuTempPeak)
+        }
+        if sparkConfig.showGPUTemp {
+            values += data.compactMap(\.gpuTempAvg)
+            values += data.compactMap(\.gpuTempPeak)
+        }
+        return paddedAxisDomain(values: values, fallback: 0...100, minSpan: 12)
+    }
+
+    private func overviewSecondaryDomain(_ data: [HourlyStats]) -> ClosedRange<Double> {
+        let values = sparkConfig.showFanRPM
+            ? data.compactMap { $0.fanRpmPeak.map { Double($0) } }
+            : []
+        return paddedAxisDomain(
+            values: values,
+            fallback: 0...4800,
+            minSpan: 800,
+            clampLowerToZero: true
+        )
+    }
+
     // MARK: - Header
 
     private var header: some View {
@@ -347,19 +373,18 @@ struct OverviewView: View {
                 )
                 .frame(height: 200)
             } else {
-                // Pick a "nice" max for the RPM axis. At least 4800
-                // (to give the line visual room even on a quiet
-                // machine), but auto-extends if the actual peaks are
-                // higher. Avoids the chart "compressing" when fan
-                // speed stays low.
-                let rpmMax: Double = max(
-                    4800,
-                    (hourly.compactMap { $0.fanRpmPeak.map { Double($0) } }.max() ?? 0) * 1.15
-                )
+                let primaryDomain = overviewPrimaryDomain(hourly)
+                let secondaryDomain = overviewSecondaryDomain(hourly)
                 DualAxisChart(
                     data: hourly,
                     dateKey: \.hour,
-                    rowsForPoint: { overviewSparklineRows($0, rpmMax: rpmMax) },
+                    rowsForPoint: {
+                        overviewSparklineRows(
+                            $0,
+                            primaryDomain: primaryDomain,
+                            secondaryDomain: secondaryDomain
+                        )
+                    },
                     dateLabel: { p in
                         let f = DateFormatter()
                         f.dateFormat = "EEE  MMM d"
@@ -369,9 +394,9 @@ struct OverviewView: View {
                         return (header, f2.string(from: p.hour))
                     },
                     primaryAxisLabel: "°C",
-                    primaryMax: 100,
+                    primaryDomain: primaryDomain,
                     secondaryAxisLabel: "RPM",
-                    secondaryMax: rpmMax
+                    secondaryDomain: secondaryDomain
                 ) {
                     // CPU min-max band — only when CPU series is on.
                     if sparkConfig.showCPUTemp {
@@ -429,7 +454,7 @@ struct OverviewView: View {
                             if let rpm = h.fanRpmPeak.map({ Double($0) }) {
                                 LineMark(
                                     x: .value("Hour", h.hour),
-                                    y: .value("RPM-norm", rpm / rpmMax * 100),
+                                    y: .value("RPM", mapValue(rpm, from: secondaryDomain, to: primaryDomain)),
                                     series: .value("Series", "Fan")
                                 )
                                 .foregroundStyle(.green)
@@ -460,7 +485,11 @@ struct OverviewView: View {
     /// Tooltip rows for the 24h chart. Each row is only included
     /// when its series is enabled, so the tooltip never advertises
     /// a value the user can't see on the chart.
-    private func overviewSparklineRows(_ h: HourlyStats, rpmMax: Double) -> [HoverRow] {
+    private func overviewSparklineRows(
+        _ h: HourlyStats,
+        primaryDomain: ClosedRange<Double>,
+        secondaryDomain: ClosedRange<Double>
+    ) -> [HoverRow] {
         var rows: [HoverRow] = []
         if sparkConfig.showCPUTemp {
             rows.append(HoverRow(label: "CPU peak", color: .orange, value: h.cpuTempPeak))
@@ -474,7 +503,9 @@ struct OverviewView: View {
             rows.append(HoverRow(
                 label: "Fan RPM",
                 color: .green,
-                plotValue: h.fanRpmPeak.map { Double($0) / rpmMax * 100 },
+                plotValue: h.fanRpmPeak.map {
+                    mapValue(Double($0), from: secondaryDomain, to: primaryDomain)
+                },
                 displayValue: h.fanRpmPeak.map { Double($0) },
                 unit: " RPM",
                 fractionDigits: 0
@@ -648,8 +679,8 @@ struct OverviewView: View {
 // MARK: - MiniHotBar
 //
 // Tiny 24-bin bar histogram used in the "Above 70°C today" card.
-// Each bin is a single hour; bar height = peak CPU temp clamped
-// to [0, 100]. Bars >= 70°C are tinted red; cooler bars are
+// Each bin is a single hour; bar height = peak CPU temp on a
+// dynamic scale that still includes the 70°C reference. Bars >= 70°C are tinted red; cooler bars are
 // secondary-tinted so the visual emphasis is on "where it was
 // hot." Drawn from the in-memory `hourly` array — no DB hit.
 
@@ -674,8 +705,16 @@ private struct MiniHotBar: View {
         .chartXAxis(.hidden)
         .chartYAxis(.hidden)
         .chartLegend(.hidden)
-        .chartYScale(domain: 0...100)
+        .chartYScale(domain: yDomain)
         .allowsHitTesting(false)
+    }
+
+    private var yDomain: ClosedRange<Double> {
+        paddedAxisDomain(
+            values: hourly.compactMap(\.cpuTempPeak) + [70],
+            fallback: 0...100,
+            minSpan: 20
+        )
     }
 }
 

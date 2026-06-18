@@ -261,6 +261,87 @@ struct ChartsView: View {
         }
     }
 
+    private func rawPrimaryDomain(_ data: [Sample]) -> ClosedRange<Double> {
+        var values: [Double] = []
+        if seriesConfig.showCPUTemp {
+            values += data.compactMap(\.cpuTempC)
+        }
+        if seriesConfig.showGPUTemp {
+            values += data.compactMap(\.gpuTempC)
+        }
+        if seriesConfig.showCPULoad {
+            values += data.compactMap { $0.cpuLoad.map { $0 * 100 } }
+        }
+        if seriesConfig.showGPULoad {
+            values += data.compactMap { $0.gpuLoad.map { $0 * 100 } }
+        }
+        return paddedAxisDomain(values: values, fallback: 0...100, minSpan: 12)
+    }
+
+    private func rawSecondaryDomain(_ data: [Sample]) -> ClosedRange<Double> {
+        let values = seriesConfig.showFanRPM
+            ? data.compactMap { $0.maxFanRPM.map { Double($0) } }
+            : []
+        return paddedAxisDomain(
+            values: values,
+            fallback: 0...4800,
+            minSpan: 800,
+            clampLowerToZero: true
+        )
+    }
+
+    private func hourlyPrimaryDomain(_ data: [HourlyStats]) -> ClosedRange<Double> {
+        var values: [Double] = []
+        if seriesConfig.showCPUTemp {
+            values += data.compactMap(\.cpuTempMin)
+            values += data.compactMap(\.cpuTempAvg)
+            values += data.compactMap(\.cpuTempPeak)
+        }
+        if seriesConfig.showGPUTemp {
+            values += data.compactMap(\.gpuTempAvg)
+            values += data.compactMap(\.gpuTempPeak)
+        }
+        return paddedAxisDomain(values: values, fallback: 0...100, minSpan: 12)
+    }
+
+    private func hourlySecondaryDomain(_ data: [HourlyStats]) -> ClosedRange<Double> {
+        let values = seriesConfig.showFanRPM
+            ? data.compactMap { $0.fanRpmPeak.map { Double($0) } }
+            : []
+        return paddedAxisDomain(
+            values: values,
+            fallback: 0...4800,
+            minSpan: 800,
+            clampLowerToZero: true
+        )
+    }
+
+    private func dailyPrimaryDomain(_ data: [DailyStats]) -> ClosedRange<Double> {
+        var values: [Double] = []
+        if seriesConfig.showCPUTemp {
+            values += data.compactMap(\.cpuTempMin)
+            values += data.compactMap(\.cpuTempAvg)
+            values += data.compactMap(\.cpuTempPeak)
+        }
+        if seriesConfig.showGPUTemp {
+            values += data.compactMap(\.gpuTempAvg)
+            values += data.compactMap(\.gpuTempPeak)
+        }
+        return paddedAxisDomain(values: values, fallback: 0...100, minSpan: 12)
+    }
+
+    private func dailySecondaryDomain(_ data: [DailyStats]) -> ClosedRange<Double> {
+        let values = seriesConfig.showFanRPM
+            ? data.compactMap { $0.fanRpmPeak.map { Double($0) } }
+            : []
+        return paddedAxisDomain(
+            values: values,
+            fallback: 0...4800,
+            minSpan: 800,
+            clampLowerToZero: true
+        )
+    }
+
     private var isEmpty: Bool {
         switch (mode, aggregation) {
         case (.live, _):             return samples.isEmpty
@@ -280,19 +361,17 @@ struct ChartsView: View {
     // value at that minute plus the fan RPM if the sample had one.
 
     private var liveChart: some View {
-        let rpmMax: Double = max(
-            4800,
-            (samples.compactMap { $0.maxFanRPM.map { Double($0) } }.max() ?? 0) * 1.15
-        )
+        let primaryDomain = rawPrimaryDomain(samples)
+        let secondaryDomain = rawSecondaryDomain(samples)
         return DualAxisChart(
             data: samples,
             dateKey: \.timestamp,
-            rowsForPoint: { liveRows($0, rpmMax: rpmMax) },
+            rowsForPoint: { liveRows($0, primaryDomain: primaryDomain, secondaryDomain: secondaryDomain) },
             dateLabel: liveDateLabel,
             primaryAxisLabel: "°C / %",
-            primaryMax: 100,
+            primaryDomain: primaryDomain,
             secondaryAxisLabel: "RPM",
-            secondaryMax: rpmMax
+            secondaryDomain: secondaryDomain
         ) {
             // CPU line + soft min-max band (only when CPU temp is on)
             if seriesConfig.showCPUTemp {
@@ -341,7 +420,7 @@ struct ChartsView: View {
                     if let rpm = s.maxFanRPM.map({ Double($0) }) {
                         LineMark(
                             x: .value("Time", s.timestamp),
-                            y: .value("RPM-norm", rpm / rpmMax * 100),
+                            y: .value("RPM", mapValue(rpm, from: secondaryDomain, to: primaryDomain)),
                             series: .value("Series", "Fan")
                         )
                         .foregroundStyle(.green)
@@ -397,7 +476,11 @@ struct ChartsView: View {
 
     /// Tooltip rows for the Live chart. Each row is only included
     /// when its series is enabled.
-    private func liveRows(_ s: Sample, rpmMax: Double) -> [HoverRow] {
+    private func liveRows(
+        _ s: Sample,
+        primaryDomain: ClosedRange<Double>,
+        secondaryDomain: ClosedRange<Double>
+    ) -> [HoverRow] {
         var rows: [HoverRow] = []
         if seriesConfig.showCPUTemp {
             rows.append(HoverRow(label: "CPU temp", color: .orange, value: s.cpuTempC))
@@ -409,7 +492,9 @@ struct ChartsView: View {
             rows.append(HoverRow(
                 label: "Fan RPM",
                 color: .green,
-                plotValue: s.maxFanRPM.map { Double($0) / rpmMax * 100 },
+                plotValue: s.maxFanRPM.map {
+                    mapValue(Double($0), from: secondaryDomain, to: primaryDomain)
+                },
                 displayValue: s.maxFanRPM.map { Double($0) },
                 unit: " RPM",
                 fractionDigits: 0
@@ -504,19 +589,17 @@ struct ChartsView: View {
     }
 
     private var historyRawChart: some View {
-        let rpmMax: Double = max(
-            4800,
-            (samples.compactMap { $0.maxFanRPM.map { Double($0) } }.max() ?? 0) * 1.15
-        )
+        let primaryDomain = rawPrimaryDomain(samples)
+        let secondaryDomain = rawSecondaryDomain(samples)
         return DualAxisChart(
             data: samples,
             dateKey: \.timestamp,
-            rowsForPoint: { liveRows($0, rpmMax: rpmMax) },
+            rowsForPoint: { liveRows($0, primaryDomain: primaryDomain, secondaryDomain: secondaryDomain) },
             dateLabel: liveDateLabel,
             primaryAxisLabel: "°C / %",
-            primaryMax: 100,
+            primaryDomain: primaryDomain,
             secondaryAxisLabel: "RPM",
-            secondaryMax: rpmMax
+            secondaryDomain: secondaryDomain
         ) {
             if seriesConfig.showCPUTemp {
                 ForEach(samples) { s in
@@ -551,7 +634,7 @@ struct ChartsView: View {
                     if let rpm = s.maxFanRPM.map({ Double($0) }) {
                         LineMark(
                             x: .value("Time", s.timestamp),
-                            y: .value("RPM-norm", rpm / rpmMax * 100),
+                            y: .value("RPM", mapValue(rpm, from: secondaryDomain, to: primaryDomain)),
                             series: .value("Series", "Fan")
                         )
                         .foregroundStyle(.green)
@@ -600,10 +683,8 @@ struct ChartsView: View {
     }
 
     private var historyHourlyChart: some View {
-        let rpmMax: Double = max(
-            4800,
-            (hourly.compactMap { $0.fanRpmPeak.map { Double($0) } }.max() ?? 0) * 1.15
-        )
+        let primaryDomain = hourlyPrimaryDomain(hourly)
+        let secondaryDomain = hourlySecondaryDomain(hourly)
         return DualAxisChart(
             data: hourly,
             dateKey: \.hour,
@@ -621,7 +702,9 @@ struct ChartsView: View {
                     rows.append(HoverRow(
                         label: "Fan RPM",
                         color: .green,
-                        plotValue: h.fanRpmPeak.map { Double($0) / rpmMax * 100 },
+                        plotValue: h.fanRpmPeak.map {
+                            mapValue(Double($0), from: secondaryDomain, to: primaryDomain)
+                        },
                         displayValue: h.fanRpmPeak.map { Double($0) },
                         unit: " RPM",
                         fractionDigits: 0
@@ -635,9 +718,9 @@ struct ChartsView: View {
                 return (f.string(from: h.hour), nil)
             },
             primaryAxisLabel: "°C",
-            primaryMax: 100,
+            primaryDomain: primaryDomain,
             secondaryAxisLabel: "RPM",
-            secondaryMax: rpmMax
+            secondaryDomain: secondaryDomain
         ) {
             if seriesConfig.showCPUTemp {
                 ForEach(hourly) { h in
@@ -689,7 +772,7 @@ struct ChartsView: View {
                     if let rpm = h.fanRpmPeak.map({ Double($0) }) {
                         LineMark(
                             x: .value("Hour", h.hour),
-                            y: .value("RPM-norm", rpm / rpmMax * 100),
+                            y: .value("RPM", mapValue(rpm, from: secondaryDomain, to: primaryDomain)),
                             series: .value("Series", "Fan")
                         )
                         .foregroundStyle(.green)
@@ -710,10 +793,8 @@ struct ChartsView: View {
     }
 
     private var historyDailyChart: some View {
-        let rpmMax: Double = max(
-            4800,
-            (daily.compactMap { $0.fanRpmPeak.map { Double($0) } }.max() ?? 0) * 1.15
-        )
+        let primaryDomain = dailyPrimaryDomain(daily)
+        let secondaryDomain = dailySecondaryDomain(daily)
         return DualAxisChart(
             data: daily,
             dateKey: \.date,
@@ -732,7 +813,9 @@ struct ChartsView: View {
                     rows.append(HoverRow(
                         label: "Fan peak",
                         color: .green,
-                        plotValue: d.fanRpmPeak.map { Double($0) / rpmMax * 100 },
+                        plotValue: d.fanRpmPeak.map {
+                            mapValue(Double($0), from: secondaryDomain, to: primaryDomain)
+                        },
                         displayValue: d.fanRpmPeak.map { Double($0) },
                         unit: " RPM",
                         fractionDigits: 0
@@ -753,9 +836,9 @@ struct ChartsView: View {
                 return (f.string(from: d.date), nil)
             },
             primaryAxisLabel: "°C",
-            primaryMax: 100,
+            primaryDomain: primaryDomain,
             secondaryAxisLabel: "RPM",
-            secondaryMax: rpmMax
+            secondaryDomain: secondaryDomain
         ) {
             // Whisker bars (min → peak)
             if seriesConfig.showCPUTemp {
@@ -805,7 +888,7 @@ struct ChartsView: View {
                     if let rpm = d.fanRpmPeak.map({ Double($0) }) {
                         LineMark(
                             x: .value("Day", d.date),
-                            y: .value("RPM-norm", rpm / rpmMax * 100),
+                            y: .value("RPM", mapValue(rpm, from: secondaryDomain, to: primaryDomain)),
                             series: .value("Series", "Fan")
                         )
                         .foregroundStyle(.green)
