@@ -78,7 +78,8 @@ struct ConfigView: View {
                     }
                     .keyboardShortcut(.defaultAction)
                     if let savedAt = savedAt {
-                        Text(String(format: L("Saved %@"), savedAt.formatted(date: .omitted, time: .shortened))
+                        let savedText = String(format: L("Saved %@"), savedAt.formatted(date: .omitted, time: .shortened))
+                        Text(savedText)
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()

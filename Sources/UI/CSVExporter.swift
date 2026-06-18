@@ -34,7 +34,7 @@ enum CSVExporter {
             to:   Int64(to.timeIntervalSince1970)
         )
 
-        var csv = buildCSV(samples: samples, from: from, to: to)
+        let csv = buildCSV(samples: samples, from: from, to: to)
         try csv.write(to: url, atomically: true, encoding: .utf8)
         return url
     }

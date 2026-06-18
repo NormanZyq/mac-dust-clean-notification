@@ -65,7 +65,7 @@ final class AlertReporter {
             tempLine = String(
                 format: L("%@ temperature rise over idle, at load level %d, grew by %.1f°C over the "
                       + "last %d days versus the %d-day baseline (now +%.1f°C above idle, was +%.1f°C; "
-                      + "p = %.3f). This is corrected for room-temperature changes.",
+                      + "p = %.3f). This is corrected for room-temperature changes."),
                 sub, f.cpuPState, f.riseDelta,
                 config.compareDays, config.baselineDays,
                 f.recentRise, f.baselineRise, f.pValue
@@ -74,7 +74,7 @@ final class AlertReporter {
             tempLine = String(
                 format: L("%@ median temperature at load level %d is %.1f°C in the last %d days — "
                       + "%.1f°C higher than the %d-day baseline (p = %.3f). Note: no idle reference "
-                      + "was available, so this is not corrected for room-temperature changes.",
+                      + "was available, so this is not corrected for room-temperature changes."),
                 sub, f.cpuPState, f.recentMedian,
                 config.compareDays, f.tempDelta, config.baselineDays, f.pValue
             )
@@ -83,7 +83,7 @@ final class AlertReporter {
         if f.fanDelta > 50 {
             fanLine = " " + String(
                 format: L("%@ Fan RPM at this load also rose from %.0f to %.0f (+%.0f RPM), consistent "
-                      + "with the cooling system working harder to hold the same temperature.",
+                      + "with the cooling system working harder to hold the same temperature."),
                 f.fanBaselineMean, f.fanRecentMean, f.fanDelta
             )
         } else {

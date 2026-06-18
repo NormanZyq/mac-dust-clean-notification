@@ -43,11 +43,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ARCH_ARGS=()
-if [[ -n "$ARCH" ]]; then
-    ARCH_ARGS=("--arch" "$ARCH")
-fi
-
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="CleanNotificationMac"
 BUNDLE_ID="com.local.clean-notification-mac"
@@ -66,9 +61,17 @@ else
     echo "==> Building Swift package ($CONFIG)…"
 fi
 
-swift build -c "$CONFIG" "${ARCH_ARGS[@]}"
+if [[ -n "$ARCH" ]]; then
+    swift build -c "$CONFIG" --arch "$ARCH"
+else
+    swift build -c "$CONFIG"
+fi
 
-BIN_PATH="$(swift build -c "$CONFIG" "${ARCH_ARGS[@]}" --show-bin-path)/$APP_NAME"
+if [[ -n "$ARCH" ]]; then
+    BIN_PATH="$(swift build -c "$CONFIG" --arch "$ARCH" --show-bin-path)/$APP_NAME"
+else
+    BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)/$APP_NAME"
+fi
 if [[ ! -x "$BIN_PATH" ]]; then
     echo "ERROR: Built binary not found at $BIN_PATH" >&2
     exit 1
