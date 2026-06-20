@@ -11,6 +11,8 @@ struct ConfigView: View {
     @State private var cfg: Config = Sampler.shared.config
     @State private var savedAt: Date?
     @State private var showResetConfirmation = false
+    @State private var showCalibrationConfirmation = false
+    @State private var showCalibrationResetConfirmation = false
 
     @State private var demoCfg: SyntheticConfig = SyntheticConfig.load()
     @State private var generating: Bool = false
@@ -49,20 +51,16 @@ struct ConfigView: View {
                 }
             }
 
-            Section(L("Comparison windows")) {
-                Stepper(value: $cfg.baselineDays, in: 7...180, step: 7) {
-                    LabeledContent(L("Baseline")) {
-                        Text(String(format: L("%d days"), cfg.baselineDays))
-                            .monospacedDigit()
-                    }
-                }
+            Section(L("Dust analysis")) {
                 Stepper(value: $cfg.compareDays, in: 1...30, step: 1) {
-                    LabeledContent(L("Recent")) {
+                    LabeledContent(L("Recent analysis window")) {
                         Text(String(format: L("%d days"), cfg.compareDays))
                             .monospacedDigit()
                     }
                 }
             }
+
+            coolingReferenceSection
 
             Section(L("Notifications")) {
                 Toggle(L("Enable system notifications"), isOn: $cfg.notificationsEnabled)
@@ -107,8 +105,68 @@ struct ConfigView: View {
                 resetSettings()
             }
         } message: {
-            Text(L("This restores sampling, alert thresholds, comparison windows, and notification settings to their defaults."))
+            Text(L("This restores sampling, alert thresholds, dust analysis, calibration, and notification settings to their defaults."))
         }
+        .alert(L("Calibrate Cooling Reference?"), isPresented: $showCalibrationConfirmation) {
+            Button(L("Cancel"), role: .cancel) { }
+            Button(L("Calibrate"), role: .destructive) {
+                calibrateCoolingReference()
+            }
+        } message: {
+            Text(L("Use calibration only when the machine is in a known healthy cooling state, such as right after cleaning dust. Future risk analysis will learn the best cooling reference from samples collected after this moment."))
+        }
+        .alert(L("Reset Cooling Calibration?"), isPresented: $showCalibrationResetConfirmation) {
+            Button(L("Cancel"), role: .cancel) { }
+            Button(L("Reset"), role: .destructive) {
+                resetCoolingCalibration()
+            }
+        } message: {
+            Text(L("This clears the calibration time marker only. Existing samples are kept, and the app returns to automatically learning from the best available historical cooling data."))
+        }
+    }
+
+    private var coolingReferenceSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 4) {
+                LabeledContent(L("Reference mode")) {
+                    Text(coolingReferenceModeText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
+                }
+                Text(L("The app compares recent behavior with the best stable cooling capacity it has observed at similar workloads. Calibration limits that learning to samples collected after a known healthy moment."))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    showCalibrationConfirmation = true
+                } label: {
+                    Label(L("Calibrate Now"), systemImage: "scope")
+                }
+
+                Button(role: .destructive) {
+                    showCalibrationResetConfirmation = true
+                } label: {
+                    Label(L("Reset Calibration"), systemImage: "arrow.counterclockwise")
+                }
+                .disabled(cfg.coolingCalibrationStartedAt == nil)
+            }
+        } header: {
+            Text(L("Cooling reference"))
+        } footer: {
+            Text(L("Calibration is optional. Use it only after cleaning dust or otherwise confirming the cooling system is healthy."))
+                .font(.caption2)
+        }
+    }
+
+    private var coolingReferenceModeText: String {
+        guard let ts = cfg.coolingCalibrationStartedAt else {
+            return L("Automatic")
+        }
+        let date = Date(timeIntervalSince1970: TimeInterval(ts))
+        return String(format: L("Calibrated since %@"), date.formatted(date: .abbreviated, time: .shortened))
     }
 
     // MARK: - Demo data section
@@ -330,6 +388,16 @@ struct ConfigView: View {
 
     private func resetSettings() {
         cfg = Config()
+        save()
+    }
+
+    private func calibrateCoolingReference() {
+        cfg.coolingCalibrationStartedAt = Int64(Date().timeIntervalSince1970)
+        save()
+    }
+
+    private func resetCoolingCalibration() {
+        cfg.coolingCalibrationStartedAt = nil
         save()
     }
 

@@ -3,7 +3,8 @@ import Foundation
 // MARK: - BaselineComparator
 //
 // Detects degraded cooling performance by comparing a recent window against
-// a historical baseline. The hard part is separating real degradation from
+// the best stable cooling capacity observed in historical raw samples. The
+// hard part is separating real degradation from
 // two confounds the user explicitly cares about:
 //
 //   (a) Workload. A machine under sustained heavy load is legitimately hot
@@ -17,7 +18,7 @@ import Foundation
 //       absolute temperatures would fire on summer arriving. We handle this
 //       WITHOUT needing an ambient sensor (most Macs, including desktops,
 //       don't expose a usable one) by measuring the TEMPERATURE RISE ABOVE
-//       IDLE within each window:
+//       IDLE:
 //
 //           chipTemp ≈ ambient + thermalResistance × power
 //           rise(load) = temp(load) − temp(idle)
@@ -27,20 +28,21 @@ import Foundation
 //       (dust, dried paste), thermalResistance rises and so does `rise`. If
 //       only the room got hotter, idle and loaded temps move together and
 //       `rise` is unchanged. So we compare the DISTRIBUTION OF RISE in the
-//       baseline window to the distribution of rise in the recent window.
+//       best historical reference to the distribution of rise in the recent
+//       window.
 //
 // We run the same analysis independently for the CPU (bucketed by CPU load)
 // and the GPU (bucketed by GPU load), and return whichever subsystem shows
 // the most significant, ambient-corrected degradation. Fan RPM at the same
 // bucket is carried as corroborating evidence.
 //
-// Statistics: per bucket we build the rise samples for each window and run a
-// Mann-Whitney U test (non-parametric — temperature is skewed). Subtracting
-// each window's own idle median is a constant per-window shift, so the test
-// reads as "did the rise distribution move up?". We trigger only when the
-// shift is both statistically significant (p < 0.05) and large enough to
-// matter (≥ the user's threshold), or when fans had to spin significantly
-// faster to hold the same bucket.
+// Statistics: per bucket we build rise samples, keep a robust lower slice of
+// historical values as the best-observed cooling reference, and compare the
+// recent distribution to that reference with a Mann-Whitney U test
+// (non-parametric — temperature is skewed). We trigger only when the shift is
+// both statistically significant (p < 0.05) and large enough to matter
+// (≥ the user's threshold), or when fans had to spin significantly faster to
+// hold the same bucket.
 
 struct ThermalFinding: Equatable {
     enum Subsystem: String, Equatable { case cpu = "CPU", gpu = "GPU" }
@@ -50,12 +52,14 @@ struct ThermalFinding: Equatable {
     // The load bucket (0..loadBuckets-1) where degradation was strongest.
     let cpuPState: Int            // kept this name for UI/back-compat; it is the load bucket
 
-    // Absolute medians (for the comparison chart the UI already draws).
+    // Reference/recent chart values. When ambient correction is available
+    // these are median rises over idle; otherwise they are absolute medians.
     let baselineMedian: Double
     let recentMedian: Double
 
-    // Ambient-corrected signal: how much the rise-above-idle grew.
-    let baselineRise: Double      // median rise above idle, baseline window
+    // Ambient-corrected signal: how much the rise-above-idle grew versus the
+    // best-observed historical cooling reference.
+    let baselineRise: Double      // median rise above idle, reference model
     let recentRise: Double        // median rise above idle, recent window
     let riseDelta: Double         // recentRise - baselineRise  (the headline number)
     let ambientCorrected: Bool    // false if no idle reference was available
@@ -123,49 +127,62 @@ enum BaselineComparator {
     /// warning context in the Overview tab.
     static func assessDustRisk(database: Database, config: Config) throws -> DustRiskAssessment {
         let now = Int64(Date().timeIntervalSince1970)
-        let baselineStart = now - Int64((config.baselineDays + config.compareDays)) * 86400
-        let baselineEnd   = now - Int64(config.compareDays) * 86400
-        let recentStart   = now - Int64(config.compareDays) * 86400
-        let recentEnd     = now
+        let recentStart = now - Int64(config.compareDays) * 86400
+        let recentEnd = now
+        let referenceStart = config.coolingCalibrationStartedAt ?? 0
+        let referenceEnd = recentStart - 1
 
         // RAW per-sample data only — the rollups have lost the load
         // dimension and the per-sample distribution the test needs.
-        let baseline = try database.fetchRawSamplesForAnalysis(from: baselineStart, to: baselineEnd)
-        let recent   = try database.fetchRawSamplesForAnalysis(from: recentStart,   to: recentEnd)
+        let reference = referenceEnd > referenceStart
+            ? try database.fetchRawSamplesForAnalysis(from: referenceStart, to: referenceEnd)
+            : []
+        let recent = try database.fetchRawSamplesForAnalysis(from: recentStart, to: recentEnd)
 
         let required = minSamplesPerBucket * 2
-        let baselineCoverage = windowCoverage(samples: baseline, from: baselineStart, to: baselineEnd)
+        let referenceReadiness = modelReadiness(samples: reference, required: required)
         let recentCoverage = windowCoverage(samples: recent, from: recentStart, to: recentEnd)
-        guard baseline.count >= required,
+        guard reference.count >= required,
               recent.count >= required,
-              baselineCoverage >= minWindowCoverage,
               recentCoverage >= minWindowCoverage else {
             return DustRiskAssessment(
                 level: .insufficientData,
                 evidence: nil,
-                baselineSampleCount: baseline.count,
+                baselineSampleCount: reference.count,
                 recentSampleCount: recent.count,
                 requiredSamplesPerWindow: required,
-                baselineCoverage: baselineCoverage,
+                baselineCoverage: referenceReadiness,
                 recentCoverage: recentCoverage
             )
         }
 
         let cpuCandidates = analyzeCandidates(
             subsystem: .cpu,
-            baseline: baseline, recent: recent, config: config,
+            baseline: reference, recent: recent, config: config,
             primaryLoad: { $0.cpuLoad },
             secondaryLoad: { $0.gpuLoad },
             temp: { $0.cpuTempC }
         )
         let gpuCandidates = analyzeCandidates(
             subsystem: .gpu,
-            baseline: baseline, recent: recent, config: config,
+            baseline: reference, recent: recent, config: config,
             primaryLoad: { $0.gpuLoad },
             secondaryLoad: { $0.cpuLoad },
             temp: { $0.gpuTempC }
         )
         let candidates = cpuCandidates + gpuCandidates
+
+        guard !candidates.isEmpty else {
+            return DustRiskAssessment(
+                level: .insufficientData,
+                evidence: nil,
+                baselineSampleCount: reference.count,
+                recentSampleCount: recent.count,
+                requiredSamplesPerWindow: required,
+                baselineCoverage: referenceReadiness,
+                recentCoverage: recentCoverage
+            )
+        }
 
         if let alertable = candidates
             .filter({ isAlertable($0, config: config) })
@@ -174,10 +191,10 @@ enum BaselineComparator {
             return DustRiskAssessment(
                 level: .needsCleaning,
                 evidence: alertable,
-                baselineSampleCount: baseline.count,
+                baselineSampleCount: reference.count,
                 recentSampleCount: recent.count,
                 requiredSamplesPerWindow: required,
-                baselineCoverage: baselineCoverage,
+                baselineCoverage: referenceReadiness,
                 recentCoverage: recentCoverage
             )
         }
@@ -189,10 +206,10 @@ enum BaselineComparator {
             return DustRiskAssessment(
                 level: .minor,
                 evidence: minor,
-                baselineSampleCount: baseline.count,
+                baselineSampleCount: reference.count,
                 recentSampleCount: recent.count,
                 requiredSamplesPerWindow: required,
-                baselineCoverage: baselineCoverage,
+                baselineCoverage: referenceReadiness,
                 recentCoverage: recentCoverage
             )
         }
@@ -200,10 +217,10 @@ enum BaselineComparator {
         return DustRiskAssessment(
             level: .none,
             evidence: nil,
-            baselineSampleCount: baseline.count,
+            baselineSampleCount: reference.count,
             recentSampleCount: recent.count,
             requiredSamplesPerWindow: required,
-            baselineCoverage: baselineCoverage,
+            baselineCoverage: referenceReadiness,
             recentCoverage: recentCoverage
         )
     }
@@ -224,8 +241,9 @@ enum BaselineComparator {
             recent, primaryLoad: primaryLoad, secondaryLoad: secondaryLoad, temp: temp)
 
         // Idle reference = the lowest populated bucket present in BOTH
-        // windows. Its median temperature stands in for "ambient + idle
-        // power" and is subtracted from every sample in the same window.
+        // sets. Its median temperature stands in for "ambient + idle
+        // power" and is subtracted from the samples before choosing the
+        // best historical cooling slice.
         guard let idleBucket = lowestSharedBucket(baseBuckets, recBuckets) else {
             // No common idle reference → cannot ambient-correct. Fall back to
             // an absolute-temperature comparison at the worst shared bucket.
@@ -243,7 +261,9 @@ enum BaselineComparator {
 
         var candidates: [ThermalFinding] = []
 
-        // Compare every loaded bucket (above idle) shared by both windows.
+        // Compare every loaded bucket (above idle) shared by both sets.
+        // Reference values are the lower, stable slice of historical rise
+        // samples, so one hot historical period cannot redefine "normal".
         let sharedBuckets = Set(baseBuckets.keys).intersection(recBuckets.keys)
             .filter { $0.primary > idleBucket.primary }
             .sorted()
@@ -254,9 +274,13 @@ enum BaselineComparator {
             guard baseTemps.count >= minSamplesPerBucket,
                   recTemps.count  >= minSamplesPerBucket else { continue }
 
-            // Rise above this window's own idle median (cancels ambient).
-            let baseRise = baseTemps.map { $0 - baseIdleMed }
+            // Rise above idle (cancels much of the ambient term). The
+            // historical side is reduced to a robust best-observed slice
+            // rather than a time-window median.
+            let baseRise = bestObservedValues(baseTemps.map { $0 - baseIdleMed })
             let recRise  = recTemps.map  { $0 - recIdleMed }
+            guard baseRise.count >= minSamplesPerBucket,
+                  recRise.count >= minSamplesPerBucket else { continue }
 
             let baseRiseMed = median(baseRise)
             let recRiseMed  = median(recRise)
@@ -275,8 +299,8 @@ enum BaselineComparator {
             let candidate = ThermalFinding(
                 subsystem: subsystem,
                 cpuPState: b.primary,
-                baselineMedian: median(baseTemps),
-                recentMedian:   median(recTemps),
+                baselineMedian: baseRiseMed,
+                recentMedian:   recRiseMed,
                 baselineRise:   baseRiseMed,
                 recentRise:     recRiseMed,
                 riseDelta:      riseDelta,
@@ -286,7 +310,7 @@ enum BaselineComparator {
                 fanRecentMean:   fanRec,
                 fanDelta:        fanDelta,
                 pValue:          p,
-                baselineCount:   baseTemps.count,
+                baselineCount:   baseRise.count,
                 recentCount:     recTemps.count
             )
             candidates.append(candidate)
@@ -298,8 +322,8 @@ enum BaselineComparator {
     //
     // Used only when there is no shared idle bucket to anchor the rise (e.g.
     // a machine that is never idle in one of the windows). We compare
-    // absolute temperatures at the worst shared bucket and flag the finding
-    // as NOT ambient-corrected so the UI/alert can soften the wording.
+    // absolute temperatures at shared buckets and flag the finding as NOT
+    // ambient-corrected so the UI/alert can soften the wording.
 
     private static func absoluteFallbackCandidates(
         subsystem: ThermalFinding.Subsystem,
@@ -316,11 +340,14 @@ enum BaselineComparator {
             guard baseTemps.count >= minSamplesPerBucket,
                   recTemps.count  >= minSamplesPerBucket else { continue }
 
-            let baseMed = median(baseTemps)
+            let bestBaseTemps = bestObservedValues(baseTemps)
+            guard bestBaseTemps.count >= minSamplesPerBucket else { continue }
+
+            let baseMed = median(bestBaseTemps)
             let recMed  = median(recTemps)
             let delta   = recMed - baseMed
-            let u = mannWhitneyU(baseTemps, recTemps)
-            let p = mannWhitneyPValue(U: u, n1: baseTemps.count, n2: recTemps.count)
+            let u = mannWhitneyU(bestBaseTemps, recTemps)
+            let p = mannWhitneyPValue(U: u, n1: bestBaseTemps.count, n2: recTemps.count)
             let (fanBase, fanRec, fanDelta) = fanStats(
                 baseline: baseline, recent: recent, bucket: b,
                 primaryLoad: primaryLoad,
@@ -340,7 +367,7 @@ enum BaselineComparator {
                 fanRecentMean:   fanRec,
                 fanDelta:        fanDelta,
                 pValue:          p,
-                baselineCount:   baseTemps.count,
+                baselineCount:   bestBaseTemps.count,
                 recentCount:     recTemps.count
             )
             candidates.append(candidate)
@@ -391,7 +418,20 @@ enum BaselineComparator {
         return Int((clamped * Double(loadBuckets - 1)).rounded())
     }
 
-    /// Lowest bucket index present in both windows with enough samples to be
+    /// A robust "best observed cooling" slice. We intentionally do not use a
+    /// single minimum point; the reference must include enough samples to be a
+    /// stable capability estimate. Taking the lower fraction captures periods
+    /// where the cooling system performed best while ignoring later degraded
+    /// history in the same load bucket.
+    private static func bestObservedValues(_ values: [Double]) -> [Double] {
+        guard values.count >= minSamplesPerBucket else { return [] }
+        let sorted = values.sorted()
+        let fractionCount = Int((Double(sorted.count) * 0.35).rounded(.up))
+        let count = min(sorted.count, max(minSamplesPerBucket, fractionCount))
+        return Array(sorted.prefix(count))
+    }
+
+    /// Lowest bucket index present in both sets with enough samples to be
     /// a stable idle reference.
     private static func lowestSharedBucket(
         _ a: [WorkloadBucket: [Double]], _ b: [WorkloadBucket: [Double]]
@@ -435,6 +475,11 @@ enum BaselineComparator {
             return 0
         }
         return max(0, min(1, (last - first) / Double(end - start)))
+    }
+
+    private static func modelReadiness(samples: [Sample], required: Int) -> Double {
+        guard required > 0 else { return 0 }
+        return min(1, Double(samples.count) / Double(required))
     }
 
     // MARK: - Math helpers

@@ -28,6 +28,10 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("UserNotifications")
             ]
+        ),
+        .testTarget(
+            name: "CleanNotificationMacTests",
+            dependencies: ["CleanNotificationMac"]
         )
     ]
 )

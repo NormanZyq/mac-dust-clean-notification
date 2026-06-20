@@ -9,9 +9,12 @@ struct Config: Equatable {
     var sampleIntervalSec: Int   = 60
     var tempThresholdC:    Double = 3.0
     var fanThresholdRPM:   Int    = 500
+    // Kept for database/backward compatibility. The dust-risk model no
+    // longer treats this as a user-selected baseline window.
     var baselineDays:      Int    = 60
     var compareDays:       Int    = 7
     var notificationsEnabled: Bool = true
+    var coolingCalibrationStartedAt: Int64? = nil
 }
 
 // MARK: - Aggregator
@@ -22,12 +25,11 @@ struct Config: Equatable {
 //   samples_hourly          -- 1 year  -->    samples_daily
 //   samples_daily           -- kept forever
 //
-// N (raw retention) is NOT a fixed 30 days: it is derived from the
-// degradation detector's baseline window (Database.rawRetentionDays), so
-// the detector always has per-sample data covering its full baseline. The
+// N (raw retention) is NOT a fixed 30 days: it is long enough for the
+// degradation detector to learn a historical best cooling reference. The
 // rollups lose the per-sample load/P-State distribution, which the
 // Mann-Whitney test and load-bucketing require — so raw rows must survive
-// at least as long as the baseline reaches back.
+// long enough for that reference model to remain useful.
 //
 // Runs on its own hourly timer (see Sampler.scheduleAggregation), never on
 // the per-sample path.

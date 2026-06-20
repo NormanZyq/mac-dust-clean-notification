@@ -22,6 +22,8 @@ final class Database {
     private var db: OpaquePointer?
     private let path: String
     private static let minimumTrustedRealGPUTempC = 15.0
+    private static let latestSchemaVersion = 3
+    private static let bestCoolingModelRetentionDays = 365
 
     init(path: String) throws {
         self.path = path
@@ -123,7 +125,8 @@ final class Database {
                 fan_threshold   INTEGER NOT NULL DEFAULT 500,
                 baseline_days   INTEGER NOT NULL DEFAULT 60,
                 compare_days    INTEGER NOT NULL DEFAULT 7,
-                notif_enabled   INTEGER NOT NULL DEFAULT 1
+                notif_enabled   INTEGER NOT NULL DEFAULT 1,
+                cooling_calibrated_at INTEGER
             );
             """,
             // Initialize the single config row on first run.
@@ -137,19 +140,26 @@ final class Database {
 
         let schemaVersion = try userVersion()
         try migrateSchema(from: schemaVersion)
-        if schemaVersion < 2 {
-            try setUserVersion(2)
+        if schemaVersion < Self.latestSchemaVersion {
+            try setUserVersion(Self.latestSchemaVersion)
         }
         try createIndexes()
     }
 
     private func migrateSchema(from version: Int) throws {
+        try migrateConfigSchema()
         try migrateSamplesSchema()
         try migrateRollupTable("samples_hourly")
         try migrateRollupTable("samples_daily")
         if version < 2 {
             try sanitizeRollupGPUTemps("samples_hourly")
             try sanitizeRollupGPUTemps("samples_daily")
+        }
+    }
+
+    private func migrateConfigSchema() throws {
+        if try !tableHasColumn("config", column: "cooling_calibrated_at") {
+            try exec("ALTER TABLE config ADD COLUMN cooling_calibrated_at INTEGER;")
         }
     }
 
@@ -388,14 +398,14 @@ final class Database {
     }
 
     /// Number of days raw 1-minute samples are kept before being rolled up
-    /// into hourly buckets. This MUST cover the degradation detector's full
-    /// baseline window, because that analysis needs per-sample data (the
-    /// rollups drop the load/P-State dimension). Derived from config with a
-    /// safety margin; floored at 35 so the default 30-day charts always have
-    /// raw data.
+    /// into hourly buckets. The dust-risk detector learns a best-observed
+    /// cooling reference from raw per-sample history, because rollups drop
+    /// the load/P-State distribution. Keep roughly a year of raw history
+    /// plus the recent comparison window; floor at 35 so the default
+    /// 30-day charts always have raw data.
     func rawRetentionDays() -> Int {
         let cfg = (try? loadConfig()) ?? Config()
-        return max(35, cfg.baselineDays + cfg.compareDays + 8)
+        return max(35, Self.bestCoolingModelRetentionDays + cfg.compareDays + 8)
     }
 
     /// Fetch samples in `[from, to]` (unix seconds), ordered by ts.
@@ -531,7 +541,7 @@ final class Database {
     // MARK: - Config
 
     func loadConfig() throws -> Config {
-        let sql = "SELECT sample_interval, temp_threshold, fan_threshold, baseline_days, compare_days, notif_enabled FROM config WHERE id = 0;"
+        let sql = "SELECT sample_interval, temp_threshold, fan_threshold, baseline_days, compare_days, notif_enabled, cooling_calibrated_at FROM config WHERE id = 0;"
         let rows = try query(sql, bindings: []) { stmt -> Config in
             Config(
                 sampleIntervalSec: Int(sqlite3_column_int(stmt, 0)),
@@ -539,7 +549,8 @@ final class Database {
                 fanThresholdRPM:   Int(sqlite3_column_int(stmt, 2)),
                 baselineDays:      Int(sqlite3_column_int(stmt, 3)),
                 compareDays:       Int(sqlite3_column_int(stmt, 4)),
-                notificationsEnabled: sqlite3_column_int(stmt, 5) != 0
+                notificationsEnabled: sqlite3_column_int(stmt, 5) != 0,
+                coolingCalibrationStartedAt: sqlite3_column_int64_opt(stmt, 6)
             )
         }
         return rows.first ?? Config()
@@ -553,7 +564,8 @@ final class Database {
                 fan_threshold   = ?,
                 baseline_days   = ?,
                 compare_days    = ?,
-                notif_enabled   = ?
+                notif_enabled   = ?,
+                cooling_calibrated_at = ?
             WHERE id = 0;
             """
         try exec(sql, bindings: [
@@ -563,6 +575,7 @@ final class Database {
             .int64(Int64(cfg.baselineDays)),
             .int64(Int64(cfg.compareDays)),
             .int64(cfg.notificationsEnabled ? 1 : 0),
+            .optionalInt64(cfg.coolingCalibrationStartedAt),
         ])
     }
 
@@ -686,6 +699,7 @@ final class Database {
         case double(Double)
         case text(String)
         case optionalDouble(Double?)
+        case optionalInt64(Int64?)
     }
 
     private static func trustedGPUTemp(_ value: Double?, source: SampleSource) -> Double? {
@@ -758,6 +772,12 @@ final class Database {
                 } else {
                     guard sqlite3_bind_null(stmt, idx) == SQLITE_OK else { throw DBError.bindFailed }
                 }
+            case .optionalInt64(let v):
+                if let v {
+                    guard sqlite3_bind_int64(stmt, idx, v) == SQLITE_OK else { throw DBError.bindFailed }
+                } else {
+                    guard sqlite3_bind_null(stmt, idx) == SQLITE_OK else { throw DBError.bindFailed }
+                }
             }
         }
     }
@@ -777,6 +797,11 @@ private func sqlite3_column_double_opt(_ stmt: OpaquePointer?, _ col: Int32) -> 
 private func sqlite3_column_int_opt(_ stmt: OpaquePointer?, _ col: Int32) -> Int? {
     if sqlite3_column_type(stmt, col) == SQLITE_NULL { return nil }
     return Int(sqlite3_column_int64(stmt, col))
+}
+
+private func sqlite3_column_int64_opt(_ stmt: OpaquePointer?, _ col: Int32) -> Int64? {
+    if sqlite3_column_type(stmt, col) == SQLITE_NULL { return nil }
+    return sqlite3_column_int64(stmt, col)
 }
 
 // MARK: - Errors

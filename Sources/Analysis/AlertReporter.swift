@@ -64,19 +64,19 @@ final class AlertReporter {
             // which is what actually indicates reduced cooling capacity.
             tempLine = String(
                 format: L("%@ temperature rise over idle, at load level %d, grew by %.1f°C over the "
-                      + "last %d days versus the %d-day baseline (now +%.1f°C above idle, was +%.1f°C; "
+                      + "last %d days versus the best observed cooling reference (now +%.1f°C above idle, reference +%.1f°C; "
                       + "p = %.3f). This is corrected for room-temperature changes."),
                 sub, f.cpuPState, f.riseDelta,
-                config.compareDays, config.baselineDays,
+                config.compareDays,
                 f.recentRise, f.baselineRise, f.pValue
             )
         } else {
             tempLine = String(
                 format: L("%@ median temperature at load level %d is %.1f°C in the last %d days — "
-                      + "%.1f°C higher than the %d-day baseline (p = %.3f). Note: no idle reference "
+                      + "%.1f°C higher than the best observed cooling reference (p = %.3f). Note: no idle reference "
                       + "was available, so this is not corrected for room-temperature changes."),
                 sub, f.cpuPState, f.recentMedian,
-                config.compareDays, f.tempDelta, config.baselineDays, f.pValue
+                config.compareDays, f.tempDelta, f.pValue
             )
         }
         let fanLine: String

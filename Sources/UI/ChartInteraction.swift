@@ -53,8 +53,6 @@ struct HoverCard: View {
     let header: String
     let subheader: String?
 
-    private let cardWidth: CGFloat = 188
-
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             VStack(alignment: .leading, spacing: 1) {
@@ -86,7 +84,7 @@ struct HoverCard: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .frame(width: cardWidth, alignment: .leading)
+        .frame(width: ChartTooltipMetrics.cardWidth, alignment: .leading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -94,6 +92,64 @@ struct HoverCard: View {
         )
         .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 2)
     }
+}
+
+private enum ChartTooltipMetrics {
+    static let cardWidth: CGFloat = 188
+    static let edgePad: CGFloat = 8
+
+    static func estimatedHeight(rowCount: Int, hasSubheader: Bool) -> CGFloat {
+        let headerHeight: CGFloat = hasSubheader ? 31 : 17
+        let dividerAndSpacing: CGFloat = 9
+        let rowHeight: CGFloat = 19
+        let verticalPadding: CGFloat = 16
+        return headerHeight + dividerAndSpacing + CGFloat(rowCount) * rowHeight + verticalPadding
+    }
+}
+
+private func dockedTooltipXOffset(
+    for date: Date,
+    chartWidth: CGFloat,
+    plotFrame: CGRect,
+    proxy: ChartProxy
+) -> CGFloat {
+    let plotX = proxy.position(forX: date) ?? (plotFrame.width / 2)
+    let hoveredOnLeft = plotX < plotFrame.width / 2
+    let leadingX = plotFrame.minX + ChartTooltipMetrics.edgePad
+    let trailingX = plotFrame.maxX - ChartTooltipMetrics.cardWidth - ChartTooltipMetrics.edgePad
+    let unclamped = hoveredOnLeft ? trailingX : leadingX
+    let maxX = max(
+        ChartTooltipMetrics.edgePad,
+        chartWidth - ChartTooltipMetrics.cardWidth - ChartTooltipMetrics.edgePad
+    )
+    return min(
+        max(unclamped, ChartTooltipMetrics.edgePad),
+        maxX
+    )
+}
+
+private func dockedTooltipYOffset(
+    rows: [HoverRow],
+    hasSubheader: Bool,
+    plotFrame: CGRect,
+    proxy: ChartProxy
+) -> CGFloat {
+    let plottedYValues = rows.compactMap { row -> CGFloat? in
+        guard let value = row.plotValue else { return nil }
+        return proxy.position(forY: value)
+    }
+    let tooltipHeight = ChartTooltipMetrics.estimatedHeight(
+        rowCount: rows.count,
+        hasSubheader: hasSubheader
+    )
+    let topY = plotFrame.minY + ChartTooltipMetrics.edgePad
+    let bottomY = plotFrame.maxY - tooltipHeight - ChartTooltipMetrics.edgePad
+
+    guard bottomY > topY else { return topY }
+    guard !plottedYValues.isEmpty else { return topY }
+
+    let averageY = plottedYValues.reduce(0, +) / CGFloat(plottedYValues.count)
+    return averageY < plotFrame.height / 2 ? bottomY : topY
 }
 
 // MARK: - Series visibility
@@ -395,9 +451,6 @@ struct InteractiveChart<DataPoint: Identifiable, Content: ChartContent>: View {
 
     @StateObject private var hover = ChartHoverState()
 
-    private let cardWidth: CGFloat = 188
-    private let edgePad: CGFloat = 8
-
     var body: some View {
         Chart {
             chartContent()
@@ -461,28 +514,33 @@ struct InteractiveChart<DataPoint: Identifiable, Content: ChartContent>: View {
                             .allowsHitTesting(false)
                         }
                     }
-                    // Tooltip — uses overlay width for clamping. The
-                    // tooltip is centered on the snapped data point's
-                    // pixel X (so it doesn't jitter as the cursor moves
-                    // within one sample's width).
+                    // Tooltip — dock to the plot corner opposite the
+                    // hovered values, so detail stays readable without
+                    // sitting directly on top of the selected line.
                     .overlay(alignment: .topLeading) {
                         if let idx = hover.hoveredIndex,
                            data.indices.contains(idx) {
                             let point = data[idx]
                             let labels = dateLabel(point)
+                            let rows = rowsForPoint(point)
                             HoverCard(
-                                rows: rowsForPoint(point),
+                                rows: rows,
                                 header: labels.header,
                                 subheader: labels.sub
                             )
                             .fixedSize()
-                            .offset(x: tooltipXOffset(
+                            .offset(x: dockedTooltipXOffset(
                                 for: point[keyPath: dateKey],
                                 chartWidth: geo.size.width,
                                 plotFrame: plotFrame,
                                 proxy: proxy
                             ))
-                            .offset(y: 4)
+                            .offset(y: dockedTooltipYOffset(
+                                rows: rows,
+                                hasSubheader: labels.sub != nil,
+                                plotFrame: plotFrame,
+                                proxy: proxy
+                            ))
                             .allowsHitTesting(false)
                         }
                     }
@@ -491,19 +549,6 @@ struct InteractiveChart<DataPoint: Identifiable, Content: ChartContent>: View {
         .transaction { transaction in
             transaction.animation = nil
         }
-    }
-
-    /// Keep the tooltip on-screen by clamping its X position relative
-    /// to the overlay width. The tooltip is centered on the snapped
-    /// data point's pixel position, not the cursor's.
-    private func tooltipXOffset(for date: Date, chartWidth: CGFloat, plotFrame: CGRect, proxy: ChartProxy) -> CGFloat {
-        let x = plotFrame.minX + (proxy.position(forX: date) ?? 0)
-        if x < cardWidth / 2 + edgePad {
-            return edgePad
-        } else if x > chartWidth - cardWidth / 2 - edgePad {
-            return chartWidth - cardWidth - edgePad
-        }
-        return x - cardWidth / 2
     }
 }
 
@@ -548,9 +593,6 @@ struct DualAxisChart<DataPoint: Identifiable, Content: ChartContent>: View {
         self.secondaryDomain = secondaryDomain
         self.chartContent = chartContent
     }
-
-    private let cardWidth: CGFloat = 188
-    private let edgePad: CGFloat = 8
 
     @StateObject private var hover = ChartHoverState()
 
@@ -655,19 +697,25 @@ struct DualAxisChart<DataPoint: Identifiable, Content: ChartContent>: View {
                            data.indices.contains(idx) {
                             let point = data[idx]
                             let labels = dateLabel(point)
+                            let rows = rowsForPoint(point)
                             HoverCard(
-                                rows: rowsForPoint(point),
+                                rows: rows,
                                 header: labels.header,
                                 subheader: labels.sub
                             )
                             .fixedSize()
-                            .offset(x: tooltipXOffset(
+                            .offset(x: dockedTooltipXOffset(
                                 for: point[keyPath: dateKey],
                                 chartWidth: geo.size.width,
                                 plotFrame: plotFrame,
                                 proxy: proxy
                             ))
-                            .offset(y: 4)
+                            .offset(y: dockedTooltipYOffset(
+                                rows: rows,
+                                hasSubheader: labels.sub != nil,
+                                plotFrame: plotFrame,
+                                proxy: proxy
+                            ))
                             .allowsHitTesting(false)
                         }
                     }
@@ -676,19 +724,6 @@ struct DualAxisChart<DataPoint: Identifiable, Content: ChartContent>: View {
         .transaction { transaction in
             transaction.animation = nil
         }
-    }
-
-    /// Keep the tooltip on-screen. Centered on the snapped data
-    /// point's pixel X so it doesn't jitter when the cursor moves
-    /// within one sample's width.
-    private func tooltipXOffset(for date: Date, chartWidth: CGFloat, plotFrame: CGRect, proxy: ChartProxy) -> CGFloat {
-        let x = plotFrame.minX + (proxy.position(forX: date) ?? 0)
-        if x < cardWidth / 2 + edgePad {
-            return edgePad
-        } else if x > chartWidth - cardWidth / 2 - edgePad {
-            return chartWidth - cardWidth - edgePad
-        }
-        return x - cardWidth / 2
     }
 
     private func formatAxisValue(_ value: Double) -> String {

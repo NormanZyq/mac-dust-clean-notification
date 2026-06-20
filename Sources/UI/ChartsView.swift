@@ -107,7 +107,7 @@ struct ChartsView: View {
     private var title: String {
         switch mode {
         case .live:    return L("Live (last 24 hours)")
-        case .compare: return L("Baseline vs recent")
+        case .compare: return L("Best cooling vs recent")
         case .history: return L("History")
         }
     }
@@ -116,7 +116,7 @@ struct ChartsView: View {
         case .live:
             return L("Raw 1-minute samples from the last 24 hours. Hover for CPU/GPU/Fan values.")
         case .compare:
-            return L("Median CPU temperature at the most-degraded P-State, recent vs baseline. Hover bars for detail.")
+            return L("Median thermal rise at the most-degraded load level, recent vs best observed cooling reference.")
         case .history:
             return L("Explore the full range of recorded data. Pick a time range, an aggregation level, and hover for point values.")
         }
@@ -550,16 +550,17 @@ struct ChartsView: View {
 
     // MARK: - Compare chart
     //
-    // Baseline vs recent bars. Hover any bar to see n (sample
+    // Best-reference vs recent bars. Hover any bar to see n (sample
     // count) and median ± spread in the tooltip, plus the p-value
     // and delta that drove the alert.
 
     private var compareChart: some View {
         let f = finding
+        let yLabel = (f?.ambientCorrected ?? true) ? L("Thermal rise °C") : L("Median °C")
         return Chart {
             BarMark(
-                x: .value("Window", "Baseline"),
-                y: .value("Median °C", f?.baselineMedian ?? 0)
+                x: .value("Window", L("Reference")),
+                y: .value(yLabel, f?.baselineMedian ?? 0)
             )
             .foregroundStyle(.green)
             .annotation(position: .top) {
@@ -568,8 +569,8 @@ struct ChartsView: View {
                     .monospacedDigit()
             }
             BarMark(
-                x: .value("Window", "Recent"),
-                y: .value("Median °C", f?.recentMedian ?? 0)
+                x: .value("Window", L("Recent")),
+                y: .value(yLabel, f?.recentMedian ?? 0)
             )
             .foregroundStyle((f?.tempDelta ?? 0) > 0 ? .red : .blue)
             .annotation(position: .top) {

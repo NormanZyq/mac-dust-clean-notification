@@ -207,7 +207,7 @@ struct OverviewView: View {
     private func dustRiskTitle(_ level: DustRiskAssessment.Level) -> String {
         switch level {
         case .insufficientData:
-            return L("Current dust risk: none, or not enough samples")
+            return L("Current dust risk: low")
         case .none:
             return L("Current dust risk: none")
         case .minor:
@@ -238,12 +238,12 @@ struct OverviewView: View {
         switch assessment.level {
         case .insufficientData:
             return String(
-                format: L("%d far-baseline samples and %d recent samples available. Keep the app running in the background for more accurate analysis."),
+                format: L("Sample count is still insufficient: %d reference and %d recent samples. Keep the app running in the background for more accurate analysis."),
                 assessment.baselineSampleCount,
                 assessment.recentSampleCount
             )
         case .none:
-            return L("No statistically significant loss of cooling capacity was found.")
+            return L("No statistically significant loss versus the best cooling reference was found.")
         case .minor:
             guard let evidence = assessment.evidence else {
                 return L("A small but significant thermal shift was found.")
@@ -255,10 +255,10 @@ struct OverviewView: View {
             )
         case .needsCleaning:
             guard let evidence = assessment.evidence else {
-                return L("The baseline comparison found a clear cooling-capacity drop.")
+                return L("The cooling reference comparison found a clear capacity drop.")
             }
             return String(
-                format: L("%@ cooling capacity appears reduced at load level %d."),
+                format: L("%@ cooling capacity appears reduced versus its best reference at load level %d."),
                 evidence.subsystem.rawValue,
                 evidence.cpuPState
             )
@@ -282,7 +282,7 @@ struct OverviewView: View {
             Divider()
 
             Text(String(
-                format: L("Baseline samples: %d · Recent samples: %d"),
+                format: L("Reference samples: %d · Recent samples: %d"),
                 assessment.baselineSampleCount,
                 assessment.recentSampleCount
             ))
@@ -295,18 +295,18 @@ struct OverviewView: View {
         guard let evidence = assessment.evidence else {
             if assessment.level == .insufficientData {
                 return String(
-                    format: L("The current algorithm compares a far-baseline window with a recent window. It needs at least %d raw samples in each window and enough time coverage before it can compare cooling capacity reliably. You can adjust both windows in Settings. Keep the app running in the background for long-term analysis; sampling is lightweight and designed for low power use. Current coverage: far baseline %.0f%%, recent %.0f%%."),
+                    format: L("The current algorithm compares the recent window with a best-observed cooling reference model. It needs at least %d raw samples in the reference model and recent window before it can compare cooling capacity reliably. You can calibrate the reference in Settings after cleaning dust or confirming the machine is healthy. Keep the app running in the background for long-term analysis; sampling is lightweight and designed for low power use. Current readiness: reference %.0f%%, recent coverage %.0f%%."),
                     assessment.requiredSamplesPerWindow,
                     assessment.baselineCoverage * 100,
                     assessment.recentCoverage * 100
                 )
             }
-            return L("The current algorithm compares recent temperatures against the historical baseline at the same workload. No significant cooling-capacity drop was found.")
+            return L("The current algorithm compares recent temperatures against the best observed cooling reference at the same workload. No significant cooling-capacity drop was found.")
         }
 
         let signal = evidence.ambientCorrected
-            ? String(format: L("Heat rise over idle increased by %.1f°C versus baseline."), evidence.riseDelta)
-            : String(format: L("Median temperature increased by %.1f°C versus baseline."), evidence.tempDelta)
+            ? String(format: L("Heat rise over idle increased by %.1f°C versus reference."), evidence.riseDelta)
+            : String(format: L("Median temperature increased by %.1f°C versus reference."), evidence.tempDelta)
         let fan = String(format: L("Fan speed changed by %+.0f RPM at the same load."), evidence.fanDelta)
         let stats = String(
             format: L("The signal is at load level %d with p = %.3f."),
