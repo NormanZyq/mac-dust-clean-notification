@@ -97,59 +97,31 @@ struct HoverCard: View {
 private enum ChartTooltipMetrics {
     static let cardWidth: CGFloat = 188
     static let edgePad: CGFloat = 8
-
-    static func estimatedHeight(rowCount: Int, hasSubheader: Bool) -> CGFloat {
-        let headerHeight: CGFloat = hasSubheader ? 31 : 17
-        let dividerAndSpacing: CGFloat = 9
-        let rowHeight: CGFloat = 19
-        let verticalPadding: CGFloat = 16
-        return headerHeight + dividerAndSpacing + CGFloat(rowCount) * rowHeight + verticalPadding
-    }
+    static let cursorGap: CGFloat = 14
 }
 
-private func dockedTooltipXOffset(
-    for date: Date,
+private func cursorTooltipXOffset(
+    cursorPlotX: CGFloat,
     chartWidth: CGFloat,
-    plotFrame: CGRect,
-    proxy: ChartProxy
+    plotFrame: CGRect
 ) -> CGFloat {
-    let plotX = proxy.position(forX: date) ?? (plotFrame.width / 2)
-    let hoveredOnLeft = plotX < plotFrame.width / 2
-    let leadingX = plotFrame.minX + ChartTooltipMetrics.edgePad
-    let trailingX = plotFrame.maxX - ChartTooltipMetrics.cardWidth - ChartTooltipMetrics.edgePad
-    let unclamped = hoveredOnLeft ? trailingX : leadingX
+    let cursorX = plotFrame.minX + cursorPlotX
+    let rightX = cursorX + ChartTooltipMetrics.cursorGap
+    let leftX = cursorX - ChartTooltipMetrics.cardWidth - ChartTooltipMetrics.cursorGap
     let maxX = max(
         ChartTooltipMetrics.edgePad,
         chartWidth - ChartTooltipMetrics.cardWidth - ChartTooltipMetrics.edgePad
     )
+
+    let unclamped = rightX <= maxX ? rightX : leftX
     return min(
         max(unclamped, ChartTooltipMetrics.edgePad),
         maxX
     )
 }
 
-private func dockedTooltipYOffset(
-    rows: [HoverRow],
-    hasSubheader: Bool,
-    plotFrame: CGRect,
-    proxy: ChartProxy
-) -> CGFloat {
-    let plottedYValues = rows.compactMap { row -> CGFloat? in
-        guard let value = row.plotValue else { return nil }
-        return proxy.position(forY: value)
-    }
-    let tooltipHeight = ChartTooltipMetrics.estimatedHeight(
-        rowCount: rows.count,
-        hasSubheader: hasSubheader
-    )
-    let topY = plotFrame.minY + ChartTooltipMetrics.edgePad
-    let bottomY = plotFrame.maxY - tooltipHeight - ChartTooltipMetrics.edgePad
-
-    guard bottomY > topY else { return topY }
-    guard !plottedYValues.isEmpty else { return topY }
-
-    let averageY = plottedYValues.reduce(0, +) / CGFloat(plottedYValues.count)
-    return averageY < plotFrame.height / 2 ? bottomY : topY
+private func fixedTooltipYOffset(plotFrame: CGRect) -> CGFloat {
+    plotFrame.minY + ChartTooltipMetrics.edgePad
 }
 
 // MARK: - Series visibility
@@ -351,6 +323,100 @@ func mapValue(_ value: Double, from source: ClosedRange<Double>, to target: Clos
     return target.lowerBound + ratio * (target.upperBound - target.lowerBound)
 }
 
+func chartDateRangeLabel(_ dates: [Date]) -> String? {
+    guard let start = dates.min(), let end = dates.max() else { return nil }
+    let calendar = Calendar.current
+    let startDay = calendar.startOfDay(for: start)
+    let endDay = calendar.startOfDay(for: end)
+
+    let dayFormatter = DateFormatter()
+    dayFormatter.dateFormat = calendar.component(.year, from: start) == calendar.component(.year, from: end)
+        ? "MMM d"
+        : "MMM d, yyyy"
+
+    let timeFormatter = DateFormatter()
+    timeFormatter.dateFormat = "HH:mm"
+
+    if startDay == endDay {
+        return "\(dayFormatter.string(from: start))  \(timeFormatter.string(from: start))-\(timeFormatter.string(from: end))"
+    }
+    return "\(dayFormatter.string(from: start)) - \(dayFormatter.string(from: end))"
+}
+
+private func timeAxisLabel(for date: Date, in dates: [Date]) -> String {
+    let span = (dates.max()?.timeIntervalSince(dates.min() ?? date)) ?? 0
+    let calendar = Calendar.current
+
+    if span <= 2 * 86_400 {
+        let hourFormatter = DateFormatter()
+        hourFormatter.dateFormat = "HH:mm"
+        if calendar.component(.hour, from: date) == 0 {
+            let dayFormatter = DateFormatter()
+            dayFormatter.dateFormat = "M/d"
+            return "\(dayFormatter.string(from: date))\n\(hourFormatter.string(from: date))"
+        }
+        return hourFormatter.string(from: date)
+    }
+
+    let formatter = DateFormatter()
+    formatter.dateFormat = span > 370 * 86_400 ? "MMM yyyy" : "MMM d"
+    return formatter.string(from: date)
+}
+
+private func dayAxisLabel(for date: Date, in dates: [Date]) -> String {
+    let span = (dates.max()?.timeIntervalSince(dates.min() ?? date)) ?? 0
+    let formatter = DateFormatter()
+    switch span {
+    case ..<(45.0 * 86_400):
+        formatter.dateFormat = "MMM d"
+    case ..<(370.0 * 86_400):
+        formatter.dateFormat = "MMM"
+    default:
+        formatter.dateFormat = "MMM yyyy"
+    }
+    return formatter.string(from: date)
+}
+
+@AxisContentBuilder
+func compactTimeAxisMarks(dates: [Date], desiredCount: Int = 8) -> some AxisContent {
+    let span = (dates.max()?.timeIntervalSince(dates.min() ?? Date())) ?? 0
+    if span <= 2 * 86_400 {
+        AxisMarks(values: .stride(by: .hour, count: 6)) { value in
+            AxisGridLine()
+            AxisTick()
+            AxisValueLabel {
+                if let date = value.as(Date.self) {
+                    Text(timeAxisLabel(for: date, in: dates))
+                        .multilineTextAlignment(.center)
+                }
+            }
+        }
+    } else {
+        AxisMarks(values: .automatic(desiredCount: desiredCount)) { value in
+            AxisGridLine()
+            AxisTick()
+            AxisValueLabel {
+                if let date = value.as(Date.self) {
+                    Text(timeAxisLabel(for: date, in: dates))
+                }
+            }
+        }
+    }
+}
+
+@AxisContentBuilder
+func compactDayAxisMarks(dates: [Date], desiredCount: Int = 8) -> some AxisContent {
+    AxisMarks(values: .automatic(desiredCount: desiredCount)) { value in
+        AxisGridLine()
+        AxisTick()
+        AxisValueLabel {
+            if let date = value.as(Date.self) {
+                Text(dayAxisLabel(for: date, in: dates))
+            }
+        }
+    }
+}
+
 func shouldShowWarningRule(in domain: ClosedRange<Double>, threshold: Double = 75) -> Bool {
     domain.contains(threshold)
 }
@@ -514,11 +580,12 @@ struct InteractiveChart<DataPoint: Identifiable, Content: ChartContent>: View {
                             .allowsHitTesting(false)
                         }
                     }
-                    // Tooltip — dock to the plot corner opposite the
-                    // hovered values, so detail stays readable without
-                    // sitting directly on top of the selected line.
+                    // Tooltip follows the cursor horizontally with a small
+                    // gap. Near the right edge it flips to the cursor's left
+                    // side and always stays inside the chart bounds.
                     .overlay(alignment: .topLeading) {
                         if let idx = hover.hoveredIndex,
+                           let cursorPlotX = hover.cursorPlotX,
                            data.indices.contains(idx) {
                             let point = data[idx]
                             let labels = dateLabel(point)
@@ -529,18 +596,12 @@ struct InteractiveChart<DataPoint: Identifiable, Content: ChartContent>: View {
                                 subheader: labels.sub
                             )
                             .fixedSize()
-                            .offset(x: dockedTooltipXOffset(
-                                for: point[keyPath: dateKey],
+                            .offset(x: cursorTooltipXOffset(
+                                cursorPlotX: cursorPlotX,
                                 chartWidth: geo.size.width,
-                                plotFrame: plotFrame,
-                                proxy: proxy
+                                plotFrame: plotFrame
                             ))
-                            .offset(y: dockedTooltipYOffset(
-                                rows: rows,
-                                hasSubheader: labels.sub != nil,
-                                plotFrame: plotFrame,
-                                proxy: proxy
-                            ))
+                            .offset(y: fixedTooltipYOffset(plotFrame: plotFrame))
                             .allowsHitTesting(false)
                         }
                     }
@@ -694,6 +755,7 @@ struct DualAxisChart<DataPoint: Identifiable, Content: ChartContent>: View {
                     }
                     .overlay(alignment: .topLeading) {
                         if let idx = hover.hoveredIndex,
+                           let cursorPlotX = hover.cursorPlotX,
                            data.indices.contains(idx) {
                             let point = data[idx]
                             let labels = dateLabel(point)
@@ -704,18 +766,12 @@ struct DualAxisChart<DataPoint: Identifiable, Content: ChartContent>: View {
                                 subheader: labels.sub
                             )
                             .fixedSize()
-                            .offset(x: dockedTooltipXOffset(
-                                for: point[keyPath: dateKey],
+                            .offset(x: cursorTooltipXOffset(
+                                cursorPlotX: cursorPlotX,
                                 chartWidth: geo.size.width,
-                                plotFrame: plotFrame,
-                                proxy: proxy
+                                plotFrame: plotFrame
                             ))
-                            .offset(y: dockedTooltipYOffset(
-                                rows: rows,
-                                hasSubheader: labels.sub != nil,
-                                plotFrame: plotFrame,
-                                proxy: proxy
-                            ))
+                            .offset(y: fixedTooltipYOffset(plotFrame: plotFrame))
                             .allowsHitTesting(false)
                         }
                     }

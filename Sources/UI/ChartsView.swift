@@ -182,6 +182,13 @@ struct ChartsView: View {
                         available: availableToggleKinds
                     )
                     Spacer()
+                    if let range = chartTimeRangeText {
+                        Text(range)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, 10)
@@ -219,6 +226,21 @@ struct ChartsView: View {
         case (.history, .hourly):     return true
         case (.history, .daily):      return true
         case (.compare, _):           return false
+        }
+    }
+
+    private var chartTimeRangeText: String? {
+        switch (mode, aggregation) {
+        case (.live, _):
+            return chartDateRangeLabel(samples.map(\.timestamp))
+        case (.history, .raw):
+            return chartDateRangeLabel(samples.map(\.timestamp))
+        case (.history, .hourly):
+            return chartDateRangeLabel(hourly.map(\.hour))
+        case (.history, .daily):
+            return chartDateRangeLabel(daily.map(\.date))
+        case (.compare, _):
+            return nil
         }
     }
 
@@ -497,7 +519,9 @@ struct ChartsView: View {
             }
         }
         .chartLegend(position: .top, alignment: .leading)
-        .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
+        .chartXAxis {
+            compactTimeAxisMarks(dates: chartSamples.map(\.timestamp), desiredCount: 6)
+        }
         .padding(12)
     }
 
@@ -706,7 +730,9 @@ struct ChartsView: View {
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
             }
         }
-        .chartXAxis { AxisMarks(values: .automatic(desiredCount: 8)) }
+        .chartXAxis {
+            compactTimeAxisMarks(dates: chartSamples.map(\.timestamp), desiredCount: 8)
+        }
         .chartLegend(position: .top, alignment: .leading)
         .padding(12)
     }
@@ -816,7 +842,9 @@ struct ChartsView: View {
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
             }
         }
-        .chartXAxis { AxisMarks(values: .automatic(desiredCount: 8)) }
+        .chartXAxis {
+            compactTimeAxisMarks(dates: hourly.map(\.hour), desiredCount: 8)
+        }
         .chartLegend(position: .top, alignment: .leading)
         .padding(12)
     }
@@ -869,33 +897,43 @@ struct ChartsView: View {
             secondaryAxisLabel: "RPM",
             secondaryDomain: secondaryDomain
         ) {
-            // Whisker bars (min → peak)
-            if seriesConfig.showCPUTemp {
-                ForEach(daily) { d in
-                    if let lo = d.cpuTempMin, let hi = d.cpuTempPeak, hi > lo {
-                        BarMark(
-                            x: .value("Day", d.date, unit: .day),
-                            yStart: .value("Min", lo),
-                            yEnd: .value("Peak", hi),
-                            width: .ratio(0.16)
-                        )
-                        .foregroundStyle(TempColor.forPeak(hi).opacity(0.55))
-                        .cornerRadius(1)
-                    }
-                }
-            }
-            // Main peak bars
             if seriesConfig.showCPUTemp {
                 ForEach(daily) { d in
                     if let v = d.cpuTempPeak {
-                        BarMark(
-                            x: .value("Day", d.date, unit: .day),
-                            yStart: .value("Axis lower", primaryDomain.lowerBound),
-                            yEnd: .value("°C", v),
-                            width: .ratio(0.5)
+                        LineMark(
+                            x: .value("Day", d.date),
+                            y: .value("°C", v),
+                            series: .value(L("Series"), L("CPU peak"))
                         )
-                        .foregroundStyle(TempColor.forPeak(v))
-                        .cornerRadius(2)
+                        .foregroundStyle(.orange)
+                        .interpolationMethod(.monotone)
+                        .lineStyle(StrokeStyle(lineWidth: 2.0))
+                        .symbol(Circle())
+                        .symbolSize(28)
+                    }
+                }
+                ForEach(daily) { d in
+                    if let v = d.cpuTempAvg {
+                        LineMark(
+                            x: .value("Day", d.date),
+                            y: .value("°C", v),
+                            series: .value(L("Series"), L("CPU avg"))
+                        )
+                        .foregroundStyle(Color.orange.opacity(0.75))
+                        .interpolationMethod(.monotone)
+                        .lineStyle(StrokeStyle(lineWidth: 1.3))
+                    }
+                }
+                ForEach(daily) { d in
+                    if let v = d.cpuTempMin {
+                        LineMark(
+                            x: .value("Day", d.date),
+                            y: .value("°C", v),
+                            series: .value(L("Series"), L("CPU min"))
+                        )
+                        .foregroundStyle(Color.orange.opacity(0.45))
+                        .interpolationMethod(.monotone)
+                        .lineStyle(StrokeStyle(lineWidth: 1.1, dash: [3, 2]))
                     }
                 }
             }
@@ -910,6 +948,20 @@ struct ChartsView: View {
                         .foregroundStyle(.blue)
                         .interpolationMethod(.monotone)
                         .lineStyle(StrokeStyle(lineWidth: 1.6))
+                        .symbol(Circle())
+                        .symbolSize(24)
+                    }
+                }
+                ForEach(daily) { d in
+                    if let v = d.gpuTempAvg {
+                        LineMark(
+                            x: .value("Day", d.date),
+                            y: .value("°C", v),
+                            series: .value(L("Series"), L("GPU avg"))
+                        )
+                        .foregroundStyle(Color.blue.opacity(0.6))
+                        .interpolationMethod(.monotone)
+                        .lineStyle(StrokeStyle(lineWidth: 1.1, dash: [3, 2]))
                     }
                 }
             }
@@ -924,6 +976,8 @@ struct ChartsView: View {
                         .foregroundStyle(.green)
                         .interpolationMethod(.monotone)
                         .lineStyle(StrokeStyle(lineWidth: 1.2, dash: [4, 2]))
+                        .symbol(Circle())
+                        .symbolSize(22)
                     }
                 }
             }
@@ -934,10 +988,7 @@ struct ChartsView: View {
             }
         }
         .chartXAxis {
-            AxisMarks(values: .stride(by: .day)) { _ in
-                AxisGridLine()
-                AxisValueLabel(format: .dateTime.day().month(.abbreviated))
-            }
+            compactDayAxisMarks(dates: daily.map(\.date), desiredCount: 8)
         }
         .chartLegend(position: .top, alignment: .leading)
         .padding(12)

@@ -200,7 +200,9 @@ struct OverviewView: View {
             recentSampleCount: todayStats?.sampleCount ?? 0,
             requiredSamplesPerWindow: 60,
             baselineCoverage: 0,
-            recentCoverage: 0
+            recentCoverage: 0,
+            referenceDayCount: 0,
+            requiredReferenceDays: 7
         )
     }
 
@@ -212,6 +214,8 @@ struct OverviewView: View {
             return L("Current dust risk: none")
         case .minor:
             return L("Current dust risk: minor")
+        case .elevated:
+            return L("Current dust risk: watching")
         case .needsCleaning:
             return L("Current dust risk: cleaning recommended")
         }
@@ -221,7 +225,8 @@ struct OverviewView: View {
         switch level {
         case .insufficientData: return "leaf.fill"
         case .none: return "checkmark.seal.fill"
-        case .minor: return "exclamationmark.triangle.fill"
+        case .minor: return "chart.line.uptrend.xyaxis"
+        case .elevated: return "exclamationmark.triangle.fill"
         case .needsCleaning: return "exclamationmark.octagon.fill"
         }
     }
@@ -230,6 +235,7 @@ struct OverviewView: View {
         switch level {
         case .insufficientData, .none: return .green
         case .minor: return .orange
+        case .elevated: return Color(red: 0.95, green: 0.45, blue: 0.05)
         case .needsCleaning: return .red
         }
     }
@@ -252,6 +258,14 @@ struct OverviewView: View {
                 format: L("%@ shows a small rise at load level %d."),
                 evidence.subsystem.rawValue,
                 evidence.cpuPState
+            )
+        case .elevated:
+            guard let evidence = assessment.evidence else {
+                return L("A thermal signal is visible, but it is not corroborated enough to recommend cleaning.")
+            }
+            return String(
+                format: L("%@ shows a stronger signal, but more reference days or corroborating buckets are needed."),
+                evidence.subsystem.rawValue
             )
         case .needsCleaning:
             guard let evidence = assessment.evidence else {
@@ -313,7 +327,21 @@ struct OverviewView: View {
             evidence.cpuPState,
             evidence.pValue
         )
-        return "\(signal) \(fan) \(stats)"
+        let support = String(
+            format: L("Evidence support: %d reference days, %d recent signal days, %d supporting load buckets."),
+            evidence.referenceDayCount,
+            evidence.supportingRecentDayCount,
+            evidence.supportingBucketCount
+        )
+        let requirement = assessment.level == .elevated
+            ? String(
+                format: L("Cleaning recommendation requires at least %d reference days and corroboration across multiple recent days or load buckets."),
+                assessment.requiredReferenceDays
+            )
+            : ""
+        return [signal, fan, stats, support, requirement]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     // MARK: - Stat cards grid
@@ -482,12 +510,21 @@ struct OverviewView: View {
         ChartCard(
             title: L("Last 24 hours"),
             trailing: AnyView(
-                SeriesToggleBar(
-                    config: sparkConfigBinding,
-                    // Hourly aggregates have no CPU/GPU load data,
-                    // so the load toggles are no-ops for this chart.
-                    available: [.cpuTemp, .gpuTemp, .fanRPM]
-                )
+                HStack(spacing: 10) {
+                    SeriesToggleBar(
+                        config: sparkConfigBinding,
+                        // Hourly aggregates have no CPU/GPU load data,
+                        // so the load toggles are no-ops for this chart.
+                        available: [.cpuTemp, .gpuTemp, .fanRPM]
+                    )
+                    if let range = chartDateRangeLabel(hourly.map(\.hour)) {
+                        Text(range)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                    }
+                }
             )
         ) {
             if hourly.isEmpty {
@@ -602,6 +639,9 @@ struct OverviewView: View {
                             }
                     }
                 }
+                .chartXAxis {
+                    compactTimeAxisMarks(dates: hourly.map(\.hour), desiredCount: 6)
+                }
                 .frame(height: 200)
             }
         }
@@ -641,16 +681,15 @@ struct OverviewView: View {
 
     // MARK: - 7-day trend
     //
-    // Two marks per day: a thin "whisker" bar from the day's
-    // minimum to its peak (the temperature range), and the main
-    // bar from zero to peak (so the visual emphasis stays on the
-    // peak). Hovering shows date + peak + avg + min + sample count.
+    // Daily CPU trend as lines rather than bars. This keeps one- or
+    // two-day ranges readable without oversized bars and avoids
+    // mixed bar/line center alignment issues.
 
     private var weeklyTrendCard: some View {
         ChartCard(
             title: L("Last 7 days · daily peak CPU"),
             trailing: AnyView(
-                Text(L("hover or click a bar"))
+                Text(L("hover for details"))
                     .font(.caption2).foregroundStyle(.secondary)
             )
         ) {
@@ -673,31 +712,42 @@ struct OverviewView: View {
                         return (f.string(from: d.date), nil)
                     }
                 ) {
-                    // Thin whisker bars (min → peak) behind the main bars
-                    ForEach(last7Days) { d in
-                        if let lo = d.cpuTempMin, let hi = d.cpuTempPeak, hi > lo {
-                            BarMark(
-                                x: .value("Day", d.date, unit: .day),
-                                yStart: .value("Min", lo),
-                                yEnd: .value("Peak", hi),
-                                width: .ratio(0.18)
-                            )
-                            .foregroundStyle(TempColor.forPeak(hi).opacity(0.55))
-                            .cornerRadius(1)
-                        }
-                    }
-
-                    // Main peak bars
                     ForEach(last7Days) { d in
                         if let v = d.cpuTempPeak {
-                            BarMark(
-                                x: .value("Day", d.date, unit: .day),
-                                yStart: .value("Axis lower", primaryDomain.lowerBound),
-                                yEnd: .value("°C", v),
-                                width: .ratio(0.5)
+                            LineMark(
+                                x: .value("Day", d.date),
+                                y: .value("°C", v),
+                                series: .value("Series", L("CPU peak"))
                             )
-                            .foregroundStyle(TempColor.forPeak(v))
-                            .cornerRadius(3)
+                            .foregroundStyle(.orange)
+                            .interpolationMethod(.monotone)
+                            .lineStyle(StrokeStyle(lineWidth: 2.0))
+                            .symbol(Circle())
+                            .symbolSize(28)
+                        }
+                    }
+                    ForEach(last7Days) { d in
+                        if let v = d.cpuTempAvg {
+                            LineMark(
+                                x: .value("Day", d.date),
+                                y: .value("°C", v),
+                                series: .value("Series", L("CPU avg"))
+                            )
+                            .foregroundStyle(Color.orange.opacity(0.75))
+                            .interpolationMethod(.monotone)
+                            .lineStyle(StrokeStyle(lineWidth: 1.3))
+                        }
+                    }
+                    ForEach(last7Days) { d in
+                        if let v = d.cpuTempMin {
+                            LineMark(
+                                x: .value("Day", d.date),
+                                y: .value("°C", v),
+                                series: .value("Series", L("CPU min"))
+                            )
+                            .foregroundStyle(Color.orange.opacity(0.45))
+                            .interpolationMethod(.monotone)
+                            .lineStyle(StrokeStyle(lineWidth: 1.1, dash: [3, 2]))
                         }
                     }
 
@@ -706,6 +756,9 @@ struct OverviewView: View {
                             .foregroundStyle(.red.opacity(0.4))
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     }
+                }
+                .chartXAxis {
+                    compactDayAxisMarks(dates: last7Days.map(\.date), desiredCount: 7)
                 }
                 .chartYScale(domain: primaryDomain.lowerBound...primaryDomain.upperBound)
                 .frame(height: 180)

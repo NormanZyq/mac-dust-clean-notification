@@ -193,6 +193,7 @@
 "Current dust risk: none, or not enough samples" = "Current dust risk: none, or not enough samples";
 "Current dust risk: none" = "Current dust risk: none";
 "Current dust risk: minor" = "Current dust risk: minor";
+"Current dust risk: watching" = "Current dust risk: watching";
 "Current dust risk: cleaning recommended" = "Current dust risk: cleaning recommended";
 "Show risk details" = "Show risk details";
 "Sample count is still insufficient: %d reference and %d recent samples. Keep the app running in the background for more accurate analysis." = "Sample count is still insufficient: %d reference and %d recent samples. Keep the app running in the background for more accurate analysis.";
@@ -202,6 +203,8 @@
 "No statistically significant loss of cooling capacity was found." = "No statistically significant loss of cooling capacity was found.";
 "A small but significant thermal shift was found." = "A small but significant thermal shift was found.";
 "%@ shows a small rise at load level %d." = "%@ shows a small rise at load level %d.";
+"A thermal signal is visible, but it is not corroborated enough to recommend cleaning." = "A thermal signal is visible, but it is not corroborated enough to recommend cleaning.";
+"%@ shows a stronger signal, but more reference days or corroborating buckets are needed." = "%@ shows a stronger signal, but more reference days or corroborating buckets are needed.";
 "The cooling reference comparison found a clear capacity drop." = "The cooling reference comparison found a clear capacity drop.";
 "The baseline comparison found a clear cooling-capacity drop." = "The baseline comparison found a clear cooling-capacity drop.";
 "%@ cooling capacity appears reduced versus its best reference at load level %d." = "%@ cooling capacity appears reduced versus its best reference at load level %d.";
@@ -218,3 +221,5 @@
 "Median temperature increased by %.1f°C versus baseline." = "Median temperature increased by %.1f°C versus baseline.";
 "Fan speed changed by %+.0f RPM at the same load." = "Fan speed changed by %+.0f RPM at the same load.";
 "The signal is at load level %d with p = %.3f." = "The signal is at load level %d with p = %.3f.";
+"Evidence support: %d reference days, %d recent signal days, %d supporting load buckets." = "Evidence support: %d reference days, %d recent signal days, %d supporting load buckets.";
+"Cleaning recommendation requires at least %d reference days and corroboration across multiple recent days or load buckets." = "Cleaning recommendation requires at least %d reference days and corroboration across multiple recent days or load buckets.";

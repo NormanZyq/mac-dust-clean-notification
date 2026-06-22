@@ -193,6 +193,7 @@
 "Current dust risk: none, or not enough samples" = "当前积灰风险：无，或数据样本不足";
 "Current dust risk: none" = "当前积灰风险：无";
 "Current dust risk: minor" = "当前积灰风险：轻微";
+"Current dust risk: watching" = "当前积灰风险：观察中";
 "Current dust risk: cleaning recommended" = "当前积灰风险：需要清灰";
 "Show risk details" = "查看风险详情";
 "Sample count is still insufficient: %d reference and %d recent samples. Keep the app running in the background for more accurate analysis." = "样本数量不足：已有 %d 条参考样本和 %d 条近期样本。保持 App 后台长期运行后，分析会更准确。";
@@ -202,6 +203,8 @@
 "No statistically significant loss of cooling capacity was found." = "未发现具有统计显著性的散热能力下降。";
 "A small but significant thermal shift was found." = "发现轻微但具有统计显著性的热变化。";
 "%@ shows a small rise at load level %d." = "%@ 在负载等级 %d 下出现轻微升温。";
+"A thermal signal is visible, but it is not corroborated enough to recommend cleaning." = "已观察到热变化信号，但证据尚不足以建议清灰。";
+"%@ shows a stronger signal, but more reference days or corroborating buckets are needed." = "%@ 出现较强信号，但仍需要更多参考日期或更多负载桶佐证。";
 "The cooling reference comparison found a clear capacity drop." = "与散热参考相比，发现明确的散热能力下降。";
 "The baseline comparison found a clear cooling-capacity drop." = "基线对比发现明确的散热能力下降。";
 "%@ cooling capacity appears reduced versus its best reference at load level %d." = "%@ 在负载等级 %d 下，相比最佳参考散热能力疑似下降。";
@@ -218,3 +221,5 @@
 "Median temperature increased by %.1f°C versus baseline." = "温度中位数比基线增加 %.1f°C。";
 "Fan speed changed by %+.0f RPM at the same load." = "相同负载下风扇转速变化 %+.0f RPM。";
 "The signal is at load level %d with p = %.3f." = "该信号出现在负载等级 %d，p = %.3f。";
+"Evidence support: %d reference days, %d recent signal days, %d supporting load buckets." = "证据支持：%d 个参考日、%d 个近期信号日、%d 个支持该判断的负载桶。";
+"Cleaning recommendation requires at least %d reference days and corroboration across multiple recent days or load buckets." = "建议清灰至少需要 %d 个参考日，并且信号需要跨多个近期日期或多个负载桶得到佐证。";

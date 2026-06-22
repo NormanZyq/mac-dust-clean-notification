@@ -37,12 +37,11 @@ import Foundation
 // bucket is carried as corroborating evidence.
 //
 // Statistics: per bucket we build rise samples, keep a robust lower slice of
-// historical values as the best-observed cooling reference, and compare the
-// recent distribution to that reference with a Mann-Whitney U test
-// (non-parametric — temperature is skewed). We trigger only when the shift is
-// both statistically significant (p < 0.05) and large enough to matter
-// (≥ the user's threshold), or when fans had to spin significantly faster to
-// hold the same bucket.
+// both historical and recent values as the best-observed cooling reference
+// for each side, and compare those distributions with a Mann-Whitney U test
+// (non-parametric — temperature is skewed). A single shifted bucket is not
+// enough to recommend cleaning: the reference model must be mature and the
+// signal must be corroborated across multiple recent days or load buckets.
 
 struct ThermalFinding: Equatable {
     enum Subsystem: String, Equatable { case cpu = "CPU", gpu = "GPU" }
@@ -76,6 +75,10 @@ struct ThermalFinding: Equatable {
     let pValue: Double
     let baselineCount: Int
     let recentCount: Int
+
+    let referenceDayCount: Int
+    let supportingRecentDayCount: Int
+    let supportingBucketCount: Int
 }
 
 struct DustRiskAssessment: Equatable {
@@ -83,6 +86,7 @@ struct DustRiskAssessment: Equatable {
         case insufficientData
         case none
         case minor
+        case elevated
         case needsCleaning
     }
 
@@ -93,6 +97,8 @@ struct DustRiskAssessment: Equatable {
     let requiredSamplesPerWindow: Int
     let baselineCoverage: Double
     let recentCoverage: Double
+    let referenceDayCount: Int
+    let requiredReferenceDays: Int
 }
 
 enum BaselineComparator {
@@ -101,7 +107,10 @@ enum BaselineComparator {
     // Matches the synthetic generator and the Sampler's P-State derivation.
     private static let loadBuckets = 9      // 0..8
     private static let minSamplesPerBucket = 30
+    private static let minDailyBucketSamples = 10
     private static let minWindowCoverage = 0.65
+    private static let minReferenceDaysForCleaning = 7
+    private static let minRecentDaysForCleaning = 3
 
     private struct WorkloadBucket: Hashable, Comparable {
         let primary: Int
@@ -111,6 +120,11 @@ enum BaselineComparator {
             if lhs.primary != rhs.primary { return lhs.primary < rhs.primary }
             return lhs.secondary < rhs.secondary
         }
+    }
+
+    private struct BucketedReading {
+        let timestamp: Date
+        let value: Double
     }
 
     /// Run the comparison and return the single most-significant finding
@@ -140,7 +154,13 @@ enum BaselineComparator {
         let recent = try database.fetchRawSamplesForAnalysis(from: recentStart, to: recentEnd)
 
         let required = minSamplesPerBucket * 2
-        let referenceReadiness = modelReadiness(samples: reference, required: required)
+        let referenceDayCount = distinctDayCount(reference)
+        let referenceReadiness = modelReadiness(
+            samples: reference,
+            required: required,
+            dayCount: referenceDayCount,
+            requiredDays: minReferenceDaysForCleaning
+        )
         let recentCoverage = windowCoverage(samples: recent, from: recentStart, to: recentEnd)
         guard reference.count >= required,
               recent.count >= required,
@@ -152,7 +172,9 @@ enum BaselineComparator {
                 recentSampleCount: recent.count,
                 requiredSamplesPerWindow: required,
                 baselineCoverage: referenceReadiness,
-                recentCoverage: recentCoverage
+                recentCoverage: recentCoverage,
+                referenceDayCount: referenceDayCount,
+                requiredReferenceDays: minReferenceDaysForCleaning
             )
         }
 
@@ -170,7 +192,7 @@ enum BaselineComparator {
             secondaryLoad: { $0.cpuLoad },
             temp: { $0.gpuTempC }
         )
-        let candidates = cpuCandidates + gpuCandidates
+        let candidates = annotateSupport(cpuCandidates + gpuCandidates, config: config)
 
         guard !candidates.isEmpty else {
             return DustRiskAssessment(
@@ -180,12 +202,16 @@ enum BaselineComparator {
                 recentSampleCount: recent.count,
                 requiredSamplesPerWindow: required,
                 baselineCoverage: referenceReadiness,
-                recentCoverage: recentCoverage
+                recentCoverage: recentCoverage,
+                referenceDayCount: referenceDayCount,
+                requiredReferenceDays: minReferenceDaysForCleaning
             )
         }
 
-        if let alertable = candidates
-            .filter({ isAlertable($0, config: config) })
+        let alertableCandidates = candidates.filter { isAlertable($0, config: config) }
+        if referenceDayCount >= minReferenceDaysForCleaning,
+           let alertable = alertableCandidates
+            .filter({ isCleaningRecommendation($0, config: config) })
             .max(by: { $0.riseDelta < $1.riseDelta })
         {
             return DustRiskAssessment(
@@ -195,7 +221,23 @@ enum BaselineComparator {
                 recentSampleCount: recent.count,
                 requiredSamplesPerWindow: required,
                 baselineCoverage: referenceReadiness,
-                recentCoverage: recentCoverage
+                recentCoverage: recentCoverage,
+                referenceDayCount: referenceDayCount,
+                requiredReferenceDays: minReferenceDaysForCleaning
+            )
+        }
+
+        if let elevated = alertableCandidates.max(by: { $0.riseDelta < $1.riseDelta }) {
+            return DustRiskAssessment(
+                level: .elevated,
+                evidence: elevated,
+                baselineSampleCount: reference.count,
+                recentSampleCount: recent.count,
+                requiredSamplesPerWindow: required,
+                baselineCoverage: referenceReadiness,
+                recentCoverage: recentCoverage,
+                referenceDayCount: referenceDayCount,
+                requiredReferenceDays: minReferenceDaysForCleaning
             )
         }
 
@@ -210,7 +252,9 @@ enum BaselineComparator {
                 recentSampleCount: recent.count,
                 requiredSamplesPerWindow: required,
                 baselineCoverage: referenceReadiness,
-                recentCoverage: recentCoverage
+                recentCoverage: recentCoverage,
+                referenceDayCount: referenceDayCount,
+                requiredReferenceDays: minReferenceDaysForCleaning
             )
         }
 
@@ -221,7 +265,9 @@ enum BaselineComparator {
             recentSampleCount: recent.count,
             requiredSamplesPerWindow: required,
             baselineCoverage: referenceReadiness,
-            recentCoverage: recentCoverage
+            recentCoverage: recentCoverage,
+            referenceDayCount: referenceDayCount,
+            requiredReferenceDays: minReferenceDaysForCleaning
         )
     }
 
@@ -256,8 +302,8 @@ enum BaselineComparator {
             )
         }
 
-        let baseIdleMed = median(baseBuckets[idleBucket] ?? [])
-        let recIdleMed  = median(recBuckets[idleBucket] ?? [])
+        let baseIdleMed = median(values(baseBuckets[idleBucket] ?? []))
+        let recIdleMed  = median(values(recBuckets[idleBucket] ?? []))
 
         var candidates: [ThermalFinding] = []
 
@@ -274,11 +320,16 @@ enum BaselineComparator {
             guard baseTemps.count >= minSamplesPerBucket,
                   recTemps.count  >= minSamplesPerBucket else { continue }
 
-            // Rise above idle (cancels much of the ambient term). The
-            // historical side is reduced to a robust best-observed slice
-            // rather than a time-window median.
-            let baseRise = bestObservedValues(baseTemps.map { $0 - baseIdleMed })
-            let recRise  = recTemps.map  { $0 - recIdleMed }
+            let baseValues = values(baseTemps)
+            let recValues = values(recTemps)
+
+            // Rise above idle (cancels much of the ambient term). Both sides
+            // use their lower stable slice so we compare cooling capacity,
+            // not heat left over after a recent workload spike.
+            let baseRiseAll = baseValues.map { $0 - baseIdleMed }
+            let recRiseAll = recValues.map { $0 - recIdleMed }
+            let baseRise = bestObservedValues(baseRiseAll)
+            let recRise = bestObservedValues(recRiseAll)
             guard baseRise.count >= minSamplesPerBucket,
                   recRise.count >= minSamplesPerBucket else { continue }
 
@@ -311,7 +362,15 @@ enum BaselineComparator {
                 fanDelta:        fanDelta,
                 pValue:          p,
                 baselineCount:   baseRise.count,
-                recentCount:     recTemps.count
+                recentCount:     recRise.count,
+                referenceDayCount: distinctDayCount(baseTemps),
+                supportingRecentDayCount: supportingRecentDayCount(
+                    readings: recTemps,
+                    idleMedian: recIdleMed,
+                    referenceMedian: baseRiseMed,
+                    threshold: config.tempThresholdC
+                ),
+                supportingBucketCount: 1
             )
             candidates.append(candidate)
         }
@@ -327,7 +386,8 @@ enum BaselineComparator {
 
     private static func absoluteFallbackCandidates(
         subsystem: ThermalFinding.Subsystem,
-        baseBuckets: [WorkloadBucket: [Double]], recBuckets: [WorkloadBucket: [Double]],
+        baseBuckets: [WorkloadBucket: [BucketedReading]],
+        recBuckets: [WorkloadBucket: [BucketedReading]],
         baseline: [Sample], recent: [Sample], config: Config,
         primaryLoad: (Sample) -> Double?,
         secondaryLoad: (Sample) -> Double?
@@ -340,14 +400,18 @@ enum BaselineComparator {
             guard baseTemps.count >= minSamplesPerBucket,
                   recTemps.count  >= minSamplesPerBucket else { continue }
 
-            let bestBaseTemps = bestObservedValues(baseTemps)
-            guard bestBaseTemps.count >= minSamplesPerBucket else { continue }
+            let baseValues = values(baseTemps)
+            let recValues = values(recTemps)
+            let bestBaseTemps = bestObservedValues(baseValues)
+            let bestRecTemps = bestObservedValues(recValues)
+            guard bestBaseTemps.count >= minSamplesPerBucket,
+                  bestRecTemps.count >= minSamplesPerBucket else { continue }
 
             let baseMed = median(bestBaseTemps)
-            let recMed  = median(recTemps)
+            let recMed  = median(bestRecTemps)
             let delta   = recMed - baseMed
-            let u = mannWhitneyU(bestBaseTemps, recTemps)
-            let p = mannWhitneyPValue(U: u, n1: bestBaseTemps.count, n2: recTemps.count)
+            let u = mannWhitneyU(bestBaseTemps, bestRecTemps)
+            let p = mannWhitneyPValue(U: u, n1: bestBaseTemps.count, n2: bestRecTemps.count)
             let (fanBase, fanRec, fanDelta) = fanStats(
                 baseline: baseline, recent: recent, bucket: b,
                 primaryLoad: primaryLoad,
@@ -368,7 +432,15 @@ enum BaselineComparator {
                 fanDelta:        fanDelta,
                 pValue:          p,
                 baselineCount:   bestBaseTemps.count,
-                recentCount:     recTemps.count
+                recentCount:     bestRecTemps.count,
+                referenceDayCount: distinctDayCount(baseTemps),
+                supportingRecentDayCount: supportingRecentDayCount(
+                    readings: recTemps,
+                    idleMedian: nil,
+                    referenceMedian: baseMed,
+                    threshold: config.tempThresholdC
+                ),
+                supportingBucketCount: 1
             )
             candidates.append(candidate)
         }
@@ -381,12 +453,48 @@ enum BaselineComparator {
         return tempTriggered || fanTriggered
     }
 
+    private static func isCleaningRecommendation(_ finding: ThermalFinding, config: Config) -> Bool {
+        guard finding.ambientCorrected else { return false }
+        guard isAlertable(finding, config: config) else { return false }
+        return finding.supportingBucketCount >= 2
+            || finding.supportingRecentDayCount >= minRecentDaysForCleaning
+    }
+
     private static func isMinorRisk(_ finding: ThermalFinding, config: Config) -> Bool {
         let tempFloor = max(1.0, config.tempThresholdC * 0.5)
         let fanFloor = max(150.0, Double(config.fanThresholdRPM) * 0.5)
         let tempShift = finding.tempDelta >= tempFloor
         let fanShift = finding.fanDelta >= fanFloor
         return finding.pValue < 0.05 && (tempShift || fanShift)
+    }
+
+    private static func annotateSupport(_ candidates: [ThermalFinding], config: Config) -> [ThermalFinding] {
+        let strongBySubsystem = Dictionary(grouping: candidates.filter {
+            isAlertable($0, config: config)
+        }, by: \.subsystem)
+        return candidates.map { finding in
+            let supportingBucketCount = strongBySubsystem[finding.subsystem]?.count ?? 0
+            return ThermalFinding(
+                subsystem: finding.subsystem,
+                cpuPState: finding.cpuPState,
+                baselineMedian: finding.baselineMedian,
+                recentMedian: finding.recentMedian,
+                baselineRise: finding.baselineRise,
+                recentRise: finding.recentRise,
+                riseDelta: finding.riseDelta,
+                ambientCorrected: finding.ambientCorrected,
+                tempDelta: finding.tempDelta,
+                fanBaselineMean: finding.fanBaselineMean,
+                fanRecentMean: finding.fanRecentMean,
+                fanDelta: finding.fanDelta,
+                pValue: finding.pValue,
+                baselineCount: finding.baselineCount,
+                recentCount: finding.recentCount,
+                referenceDayCount: finding.referenceDayCount,
+                supportingRecentDayCount: finding.supportingRecentDayCount,
+                supportingBucketCount: supportingBucketCount
+            )
+        }
     }
 
     // MARK: - Bucketing helpers
@@ -399,8 +507,8 @@ enum BaselineComparator {
         primaryLoad: (Sample) -> Double?,
         secondaryLoad: (Sample) -> Double?,
         temp: (Sample) -> Double?
-    ) -> [WorkloadBucket: [Double]] {
-        var out: [WorkloadBucket: [Double]] = [:]
+    ) -> [WorkloadBucket: [BucketedReading]] {
+        var out: [WorkloadBucket: [BucketedReading]] = [:]
         for s in samples {
             guard let primary = primaryLoad(s), let t = temp(s) else { continue }
             let secondary = secondaryLoad(s) ?? 0
@@ -408,7 +516,7 @@ enum BaselineComparator {
                 primary: loadBucket(primary),
                 secondary: loadBucket(secondary)
             )
-            out[bucket, default: []].append(t)
+            out[bucket, default: []].append(BucketedReading(timestamp: s.timestamp, value: t))
         }
         return out
     }
@@ -416,6 +524,10 @@ enum BaselineComparator {
     private static func loadBucket(_ load: Double) -> Int {
         let clamped = max(0.0, min(1.0, load))
         return Int((clamped * Double(loadBuckets - 1)).rounded())
+    }
+
+    private static func values(_ readings: [BucketedReading]) -> [Double] {
+        readings.map(\.value)
     }
 
     /// A robust "best observed cooling" slice. We intentionally do not use a
@@ -431,10 +543,40 @@ enum BaselineComparator {
         return Array(sorted.prefix(count))
     }
 
+    private static func supportingRecentDayCount(
+        readings: [BucketedReading],
+        idleMedian: Double?,
+        referenceMedian: Double,
+        threshold: Double
+    ) -> Int {
+        let calendar = Calendar.current
+        var byDay: [Date: [Double]] = [:]
+        for reading in readings {
+            let day = calendar.startOfDay(for: reading.timestamp)
+            let value = idleMedian.map { reading.value - $0 } ?? reading.value
+            byDay[day, default: []].append(value)
+        }
+        return byDay.values.filter { dayValues in
+            guard dayValues.count >= minDailyBucketSamples else { return false }
+            return median(dayValues) - referenceMedian >= threshold
+        }.count
+    }
+
+    private static func distinctDayCount(_ samples: [Sample]) -> Int {
+        let calendar = Calendar.current
+        return Set(samples.map { calendar.startOfDay(for: $0.timestamp) }).count
+    }
+
+    private static func distinctDayCount(_ readings: [BucketedReading]) -> Int {
+        let calendar = Calendar.current
+        return Set(readings.map { calendar.startOfDay(for: $0.timestamp) }).count
+    }
+
     /// Lowest bucket index present in both sets with enough samples to be
     /// a stable idle reference.
     private static func lowestSharedBucket(
-        _ a: [WorkloadBucket: [Double]], _ b: [WorkloadBucket: [Double]]
+        _ a: [WorkloadBucket: [BucketedReading]],
+        _ b: [WorkloadBucket: [BucketedReading]]
     ) -> WorkloadBucket? {
         Set(a.keys).intersection(b.keys)
             .filter { (a[$0]?.count ?? 0) >= minSamplesPerBucket
@@ -477,9 +619,16 @@ enum BaselineComparator {
         return max(0, min(1, (last - first) / Double(end - start)))
     }
 
-    private static func modelReadiness(samples: [Sample], required: Int) -> Double {
-        guard required > 0 else { return 0 }
-        return min(1, Double(samples.count) / Double(required))
+    private static func modelReadiness(
+        samples: [Sample],
+        required: Int,
+        dayCount: Int,
+        requiredDays: Int
+    ) -> Double {
+        guard required > 0, requiredDays > 0 else { return 0 }
+        let sampleReadiness = Double(samples.count) / Double(required)
+        let dayReadiness = Double(dayCount) / Double(requiredDays)
+        return min(1, sampleReadiness, dayReadiness)
     }
 
     // MARK: - Math helpers
