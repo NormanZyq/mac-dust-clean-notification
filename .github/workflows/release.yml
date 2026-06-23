@@ -62,5 +62,6 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: "DustWatch ${{ github.ref_name }} beta"
+          prerelease: true
           files: artifacts/**/*.dmg
           generate_release_notes: true
