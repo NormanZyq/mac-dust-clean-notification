@@ -50,12 +50,9 @@ final class Sampler {
     init() {
         self.smc = SMCDevice()
         self.reader = SMCReader(device: smc)
-        // Default DB path; main() rewrites this before calling start().
-        let dir = NSSearchPathForDirectoriesInDomains(
-            .applicationSupportDirectory, .userDomainMask, true).first ?? NSTemporaryDirectory()
-        let path = (dir as NSString)
-            .appendingPathComponent("DustWatch")
-            .appending("/data.db")
+        // Default DB path, with a one-time migration from the pre-rename
+        // CleanNotificationMac app support directory if present.
+        let path = LegacyDatabaseMigrator.preparedDefaultDatabasePath()
         self.database = (try? Database(path: path)) ?? {
             // Fallback: try /tmp so the app still launches.
             return try! Database(path: NSTemporaryDirectory() + "cnm-fallback.db")

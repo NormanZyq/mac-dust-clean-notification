@@ -3,6 +3,84 @@ import XCTest
 import SQLite3
 
 final class DatabaseMigrationTests: XCTestCase {
+    func testMigratesLegacyCleanNotificationDatabaseToDustWatchPath() throws {
+        let root = temporaryDirectoryURL()
+        let legacyURL = root
+            .appendingPathComponent("CleanNotificationMac", isDirectory: true)
+            .appendingPathComponent("data.db")
+        let currentURL = root
+            .appendingPathComponent("DustWatch", isDirectory: true)
+            .appendingPathComponent("data.db")
+        let markerURL = currentURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(".test-migrated")
+
+        try FileManager.default.createDirectory(
+            at: legacyURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try createVersionZeroDatabase(at: legacyURL.path)
+
+        try LegacyDatabaseMigrator.migrateIfNeeded(
+            currentPath: currentURL.path,
+            legacyPath: legacyURL.path,
+            markerPath: markerURL.path
+        )
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: currentURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: markerURL.path))
+        XCTAssertEqual(try userVersion(at: currentURL.path), 3)
+        XCTAssertEqual(try scalarInt64("SELECT count(*) FROM samples;", at: currentURL.path), 1)
+        XCTAssertEqual(try scalarDouble("SELECT cpu_temp FROM samples WHERE ts = 1000;", at: currentURL.path), 55.0, accuracy: 0.001)
+    }
+
+    func testMigratesLegacyDatabaseOverFreshDustWatchDatabaseAndMergesRows() throws {
+        let root = temporaryDirectoryURL()
+        let legacyURL = root
+            .appendingPathComponent("CleanNotificationMac", isDirectory: true)
+            .appendingPathComponent("data.db")
+        let currentDir = root.appendingPathComponent("DustWatch", isDirectory: true)
+        let currentURL = currentDir.appendingPathComponent("data.db")
+        let markerURL = currentDir.appendingPathComponent(".test-migrated")
+
+        try FileManager.default.createDirectory(
+            at: legacyURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(at: currentDir, withIntermediateDirectories: true)
+        try createVersionZeroDatabase(at: legacyURL.path)
+
+        do {
+            let currentDatabase = try Database(path: currentURL.path)
+            try currentDatabase.insert(Sample(
+                timestamp: Date(timeIntervalSince1970: 2_000),
+                cpuTempC: 61.0,
+                gpuTempC: nil,
+                cpuFreqGHz: nil,
+                cpuLoad: nil,
+                gpuLoad: nil,
+                cpuPState: [2],
+                fanRPMs: [1_600],
+                source: .real
+            ))
+        }
+
+        try LegacyDatabaseMigrator.migrateIfNeeded(
+            currentPath: currentURL.path,
+            legacyPath: legacyURL.path,
+            markerPath: markerURL.path
+        )
+
+        XCTAssertEqual(try scalarInt64("SELECT count(*) FROM samples;", at: currentURL.path), 2)
+        XCTAssertEqual(try scalarInt64("SELECT count(*) FROM samples WHERE ts IN (1000, 2000);", at: currentURL.path), 2)
+        let backupDirs = try FileManager.default.contentsOfDirectory(
+            at: currentDir,
+            includingPropertiesForKeys: nil
+        ).filter { $0.lastPathComponent.hasPrefix("pre-legacy-migration-") }
+        XCTAssertEqual(backupDirs.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: backupDirs[0].appendingPathComponent("data.db").path))
+    }
+
     func testMigratesVersionZeroDatabaseToCoolingCalibrationSchema() throws {
         let url = temporaryDatabaseURL()
         try createVersionZeroDatabase(at: url.path)
@@ -68,6 +146,11 @@ final class DatabaseMigrationTests: XCTestCase {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("sqlite")
+    }
+
+    private func temporaryDirectoryURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
     }
 
     private func createVersionZeroDatabase(at path: String) throws {

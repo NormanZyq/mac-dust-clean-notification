@@ -158,12 +158,17 @@ The right-click menu on the menu-bar icon also has:
 
 ## Releases
 
-`v0.1.1` is a beta release. Pushing a `v*` tag to GitHub runs
+`v0.1.2` is a beta release. Pushing a `v*` tag to GitHub runs
 the release workflow and uploads two DMG artifacts. Each DMG contains
 `DustWatch.app` and an `Applications` shortcut for drag-and-drop install:
 
-- `DustWatch-v0.1.1-x86_64.dmg`
-- `DustWatch-v0.1.1-arm64.dmg`
+- `DustWatch-v0.1.2-x86_64.dmg`
+- `DustWatch-v0.1.2-arm64.dmg`
+
+On first launch, DustWatch also checks for data from the pre-rename
+`CleanNotificationMac` app support directory. If found, it copies that
+database into the new `DustWatch` directory and merges any samples that
+were written by an earlier DustWatch beta launch.
 
 ## Caveats
 
