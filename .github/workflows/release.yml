@@ -57,6 +57,46 @@ jobs:
         with:
           path: artifacts
 
+      - name: Remove existing release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          repo = os.environ["GH_REPOSITORY"]
+          tag = os.environ["GH_REF_NAME"]
+          token = os.environ["GH_TOKEN"]
+          base = f"https://api.github.com/repos/{repo}"
+
+          def request(method, path):
+              req = urllib.request.Request(
+                  base + path,
+                  method=method,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  body = response.read()
+              return json.loads(body.decode("utf-8")) if body else None
+
+          releases = request("GET", "/releases?per_page=100") or []
+          for release in releases:
+              if release.get("tag_name") == tag:
+                  release_id = release["id"]
+                  print(f"Deleting existing release {release_id} for {tag}")
+                  request("DELETE", f"/releases/{release_id}")
+          PY
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
