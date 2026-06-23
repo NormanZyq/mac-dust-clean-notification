@@ -149,7 +149,9 @@ struct ChartsView: View {
                 Spacer()
 
                 Button {
-                    exportCSV()
+                    Task { @MainActor in
+                        exportCSV()
+                    }
                 } label: {
                     Label(L("Export CSV"), systemImage: "square.and.arrow.up")
                 }
