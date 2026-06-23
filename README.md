@@ -158,11 +158,12 @@ The right-click menu on the menu-bar icon also has:
 
 ## Releases
 
-`v0.1.0` is the first public beta. Pushing a `v*` tag to GitHub runs
-the release workflow and uploads two DMG artifacts:
+`v0.1.1` is a beta release. Pushing a `v*` tag to GitHub runs
+the release workflow and uploads two DMG artifacts. Each DMG contains
+`DustWatch.app` and an `Applications` shortcut for drag-and-drop install:
 
-- `DustWatch-v0.1.0-x86_64.dmg`
-- `DustWatch-v0.1.0-arm64.dmg`
+- `DustWatch-v0.1.1-x86_64.dmg`
+- `DustWatch-v0.1.1-arm64.dmg`
 
 ## Caveats
 

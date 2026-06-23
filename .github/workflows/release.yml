@@ -34,12 +34,18 @@ jobs:
 
           APP_NAME="DustWatch"
           VERSION="${{ github.ref_name }}"
-          APP_DIR="build/$APP_NAME-${{ matrix.arch }}.app"
+          APP_DIR="build/$APP_NAME.app"
           DMG_PATH="build/$APP_NAME-${VERSION}-${{ matrix.name }}.dmg"
+          DMG_ROOT="build/dmg-root-${{ matrix.name }}"
 
-            hdiutil create \
+          rm -rf "$DMG_ROOT"
+          mkdir -p "$DMG_ROOT"
+          ditto "$APP_DIR" "$DMG_ROOT/$APP_NAME.app"
+          ln -s /Applications "$DMG_ROOT/Applications"
+
+          hdiutil create \
             -volname "$APP_NAME ${VERSION} (${{ matrix.name }})" \
-            -srcfolder "$APP_DIR" \
+            -srcfolder "$DMG_ROOT" \
             -ov -format UDZO "$DMG_PATH"
 
       - uses: actions/upload-artifact@v4

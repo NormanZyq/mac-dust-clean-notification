@@ -47,12 +47,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="DustWatch"
 BUILD_DIR="$ROOT/build"
 
-SUFFIX=""
-if [[ -n "$ARCH" ]]; then
-    SUFFIX="-$ARCH"
-fi
-
-APP_DIR="$BUILD_DIR/$APP_NAME$SUFFIX.app"
+APP_DIR="$BUILD_DIR/$APP_NAME.app"
 
 if [[ -n "$ARCH" ]]; then
     echo "==> Building Swift package ($CONFIG, arch: $ARCH)…"

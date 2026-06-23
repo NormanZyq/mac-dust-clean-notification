@@ -9,9 +9,9 @@
     <key>CFBundleIdentifier</key>
     <string>io.github.normanzyq.dustwatch</string>
     <key>CFBundleVersion</key>
-    <string>0.1.0</string>
+    <string>0.1.1</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>0.1.1</string>
     <key>CFBundleExecutable</key>
     <string>DustWatch</string>
     <key>CFBundlePackageType</key>
