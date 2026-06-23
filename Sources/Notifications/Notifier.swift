@@ -75,5 +75,5 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 }
 
 extension Notification.Name {
-    static let openMainWindowRequested = Notification.Name("CleanNotificationMac.openMainWindow")
+    static let openMainWindowRequested = Notification.Name("DustWatch.openMainWindow")
 }

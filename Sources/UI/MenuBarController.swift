@@ -65,7 +65,7 @@ final class MenuBarController: NSObject {
         let cfg = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
         let img = NSImage(
             systemSymbolName: symbol,
-            accessibilityDescription: L("Clean Notification")
+            accessibilityDescription: L("DustWatch")
         )
         button.image = img?.withSymbolConfiguration(cfg)
         // Tint: red when alert, default otherwise.
@@ -85,7 +85,7 @@ final class MenuBarController: NSObject {
                                   keyEquivalent: "d")
         openItem.keyEquivalentModifierMask = [.command, .shift]
         openItem.title = L("Open Dashboard…")
-        openItem.toolTip = L("Show the Clean Notification dashboard")
+        openItem.toolTip = L("Show the DustWatch dashboard")
         openItem.target = self
         menu.addItem(openItem)
 
@@ -205,5 +205,5 @@ final class MenuBarController: NSObject {
 }
 
 extension Notification.Name {
-    static let thermalAlertStateChanged = Notification.Name("CleanNotificationMac.thermalAlertStateChanged")
+    static let thermalAlertStateChanged = Notification.Name("DustWatch.thermalAlertStateChanged")
 }

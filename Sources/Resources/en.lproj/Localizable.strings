@@ -4,8 +4,8 @@
 "Fan" = "Fan";
 "CPU%" = "CPU%";
 "GPU%" = "GPU%";
-"Clean Notification" = "Clean Notification";
-"Clean Notification Mac — sample export" = "Clean Notification Mac — sample export";
+"DustWatch" = "DustWatch";
+"DustWatch — sample export" = "DustWatch — sample export";
 "Toggle %@ series" = "Toggle %@ series";
 "Range" = "Range";
 "Aggregation" = "Aggregation";
@@ -172,7 +172,7 @@
 "Sampler is using synthetic data, not real SMC reads." = "Sampler is using synthetic data, not real SMC reads.";
 "Open Dashboard…" = "Open Dashboard…";
 "OK" = "OK";
-"Show the Clean Notification dashboard" = "Show the Clean Notification dashboard";
+"Show the DustWatch dashboard" = "Show the DustWatch dashboard";
 "Export Last 24 Hours as CSV…" = "Export Last 24 Hours as CSV…";
 "Reveal Data File in Finder" = "Reveal Data File in Finder";
 "Generate 30-Day Demo Data…" = "Generate 30-Day Demo Data…";

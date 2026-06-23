@@ -20,7 +20,7 @@ struct PopoverView: View {
             HStack {
                 Image(systemName: "thermometer.medium")
                     .foregroundStyle(.tint)
-                Text(L("Clean Notification"))
+                Text(L("DustWatch"))
                     .font(.headline)
                 Spacer()
                 if samplerObserver.isDemoMode { DemoModeBadge() }

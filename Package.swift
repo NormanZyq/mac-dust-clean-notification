@@ -2,13 +2,13 @@
 import PackageDescription
 
 let package = Package(
-    name: "CleanNotificationMac",
+    name: "DustWatch",
     defaultLocalization: "en",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "CleanNotificationMac", targets: ["CleanNotificationMac"])
+        .executable(name: "DustWatch", targets: ["DustWatch"])
     ],
     targets: [
         // Note: Info.plist and entitlements live under Sources/Resources/ but
@@ -16,11 +16,14 @@ let package = Package(
         // bundle by build.sh — macOS reads Contents/Info.plist at launch and
         // codesign consumes the entitlements file directly.
         .executableTarget(
-            name: "CleanNotificationMac",
+            name: "DustWatch",
             path: "Sources",
             exclude: [
                 "Resources/Info.plist",
-                "Resources/CleanNotificationMac.entitlements",
+                "Resources/DustWatch.entitlements",
+                "Resources/AppIcon.icns",
+                "Resources/AppIcon.iconset",
+                "Resources/icon_1024.png",
                 "Diagnostic",
             ],
             linkerSettings: [
@@ -30,8 +33,8 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "CleanNotificationMacTests",
-            dependencies: ["CleanNotificationMac"]
+            name: "DustWatchTests",
+            dependencies: ["DustWatch"]
         )
     ]
 )

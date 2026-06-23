@@ -13,7 +13,7 @@ final class AlertReporter {
     private let cooldownSec: Int64 = 7 * 86400   // 7 days
     private let runIntervalSec: TimeInterval = 6 * 3600
     private var timer: DispatchSourceTimer?
-    private let queue = DispatchQueue(label: "com.local.clean-notification-mac.alerts",
+    private let queue = DispatchQueue(label: "io.github.normanzyq.dustwatch.alerts",
                                       qos: .utility)
     private let alertKind = "thermal_degradation"
 

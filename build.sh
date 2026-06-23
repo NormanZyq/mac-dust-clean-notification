@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build.sh — Build CleanNotificationMac.app from SwiftPM
+# build.sh — Build DustWatch.app from SwiftPM
 #
 # Usage:
 #   ./build.sh                    # release build
@@ -44,8 +44,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-APP_NAME="CleanNotificationMac"
-BUNDLE_ID="com.local.clean-notification-mac"
+APP_NAME="DustWatch"
 BUILD_DIR="$ROOT/build"
 
 SUFFIX=""
@@ -89,8 +88,8 @@ chmod +x "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "$ROOT/Sources/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
 
 # Copy entitlements (not embedded into bundle, used at sign step)
-cp "$ROOT/Sources/Resources/CleanNotificationMac.entitlements" \
-   "$APP_DIR/Contents/Resources/CleanNotificationMac.entitlements"
+cp "$ROOT/Sources/Resources/DustWatch.entitlements" \
+   "$APP_DIR/Contents/Resources/DustWatch.entitlements"
 
 # Copy localized .lproj bundles.
 cp -R "$ROOT/Sources/Resources/"*.lproj "$APP_DIR/Contents/Resources/"
@@ -110,7 +109,7 @@ fi
 # Ad-hoc code sign
 echo "==> Ad-hoc codesigning…"
 codesign --force --deep --sign - \
-    --entitlements "$ROOT/Sources/Resources/CleanNotificationMac.entitlements" \
+    --entitlements "$ROOT/Sources/Resources/DustWatch.entitlements" \
     "$APP_DIR"
 
 echo ""

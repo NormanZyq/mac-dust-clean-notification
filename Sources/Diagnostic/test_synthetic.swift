@@ -5,7 +5,7 @@ import Foundation
 
 let home = FileManager.default.homeDirectoryForCurrentUser
 let dbPath = home
-    .appendingPathComponent("Library/Application Support/CleanNotificationMac/data.db")
+    .appendingPathComponent("Library/Application Support/DustWatch/data.db")
     .path
 
 let db = try Database(path: dbPath)

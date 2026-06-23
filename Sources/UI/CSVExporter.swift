@@ -43,7 +43,7 @@ enum CSVExporter {
     static func buildCSV(samples: [Sample], from: Date, to: Date) -> String {
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime]
-        var out = "# Clean Notification Mac — sample export\n"
+        var out = "# DustWatch — sample export\n"
         out += "# From: \(iso.string(from: from))\n"
         out += "# To:   \(iso.string(from: to))\n"
         out += "# Rows: \(samples.count)\n"

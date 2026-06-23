@@ -9,48 +9,18 @@ permissions:
   contents: write
 
 jobs:
-  plan:
-    runs-on: macos-14
-    outputs:
-      matrix: ${{ steps.detect.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: detect
-        name: Detect target architectures
-        shell: bash
-        env:
-          FORCE_ARM_ONLY: ${{ vars.FORCE_ARM_ONLY || 'false' }}
-        run: |
-          set -euo pipefail
-
-          matrix_file="$(mktemp)"
-
-          if [[ "${FORCE_ARM_ONLY,,}" == "true" || "${FORCE_ARM_ONLY,,}" == "1" ]]; then
-            cat >"$matrix_file" <<'JSON'
-[{"arch":"arm64","runner":"macos-14","name":"arm64"}]
-JSON
-          elif rg -qi "(Apple[[:space:]]+Silicon|arm64)" README.md Sources/SMC Sources/Resources/Info.plist; then
-            echo "Detected Apple Silicon specific marker, only building arm64."
-            cat >"$matrix_file" <<'JSON'
-[{"arch":"arm64","runner":"macos-14","name":"arm64"}]
-JSON
-          else
-            cat >"$matrix_file" <<'JSON'
-[{"arch":"x86_64","runner":"macos-15-intel","name":"x86_64"},{"arch":"arm64","runner":"macos-14","name":"arm64"}]
-JSON
-          fi
-
-          matrix="$(tr -d '\n' < "$matrix_file")"
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-
   build:
-    needs: plan
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJson(needs.plan.outputs.matrix) }}
+        include:
+          - arch: x86_64
+            runner: macos-15-intel
+            name: x86_64
+          - arch: arm64
+            runner: macos-14
+            name: arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +32,7 @@ JSON
           chmod +x build.sh
           ./build.sh --arch "${{ matrix.arch }}"
 
-          APP_NAME="CleanNotificationMac"
+          APP_NAME="DustWatch"
           VERSION="${{ github.ref_name }}"
           APP_DIR="build/$APP_NAME-${{ matrix.arch }}.app"
           DMG_PATH="build/$APP_NAME-${VERSION}-${{ matrix.name }}.dmg"
@@ -75,7 +45,7 @@ JSON
       - uses: actions/upload-artifact@v4
         with:
           name: "dmg-${{ matrix.name }}"
-          path: build/CleanNotificationMac-${{ github.ref_name }}-${{ matrix.name }}.dmg
+          path: build/DustWatch-${{ github.ref_name }}-${{ matrix.name }}.dmg
           if-no-files-found: error
 
   release:
@@ -91,6 +61,6 @@ JSON
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: "Clean Notification Mac ${{ github.ref_name }}"
+          name: "DustWatch ${{ github.ref_name }} beta"
           files: artifacts/**/*.dmg
           generate_release_notes: true

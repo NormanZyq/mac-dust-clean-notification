@@ -1,5 +1,5 @@
 import XCTest
-@testable import CleanNotificationMac
+@testable import DustWatch
 
 final class BaselineComparatorTests: XCTestCase {
     func testStrongSignalWithShortReferenceIsElevatedNotCleaning() throws {

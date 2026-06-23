@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>CleanNotificationMac</string>
+    <string>DustWatch</string>
     <key>CFBundleDisplayName</key>
-    <string>Clean Notification</string>
+    <string>DustWatch</string>
     <key>CFBundleIdentifier</key>
-    <string>com.local.clean-notification-mac</string>
+    <string>io.github.normanzyq.dustwatch</string>
     <key>CFBundleVersion</key>
     <string>0.1.0</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleExecutable</key>
-    <string>CleanNotificationMac</string>
+    <string>DustWatch</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleSignature</key>

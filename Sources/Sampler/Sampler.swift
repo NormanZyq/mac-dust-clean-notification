@@ -21,7 +21,7 @@ final class Sampler {
     private let smc: SMCDevice
     private let reader: SMCReader
     private let database: Database
-    private let queue = DispatchQueue(label: "com.local.clean-notification-mac.sampler",
+    private let queue = DispatchQueue(label: "io.github.normanzyq.dustwatch.sampler",
                                       qos: .utility)
     private var timer: DispatchSourceTimer?
     private var aggregationTimer: DispatchSourceTimer?
@@ -32,7 +32,7 @@ final class Sampler {
     // Posted on the main queue after each sample is persisted. UI views
     // subscribe via NotificationCenter to refresh charts and badges.
 
-    static let newSampleNotification = Notification.Name("CleanNotificationMac.newSample")
+    static let newSampleNotification = Notification.Name("DustWatch.newSample")
     static let sampleKey: String = "sample"
 
     private(set) var latest: Sample?
@@ -54,7 +54,7 @@ final class Sampler {
         let dir = NSSearchPathForDirectoriesInDomains(
             .applicationSupportDirectory, .userDomainMask, true).first ?? NSTemporaryDirectory()
         let path = (dir as NSString)
-            .appendingPathComponent("CleanNotificationMac")
+            .appendingPathComponent("DustWatch")
             .appending("/data.db")
         self.database = (try? Database(path: path)) ?? {
             // Fallback: try /tmp so the app still launches.

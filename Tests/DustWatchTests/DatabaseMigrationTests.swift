@@ -1,5 +1,5 @@
 import XCTest
-@testable import CleanNotificationMac
+@testable import DustWatch
 import SQLite3
 
 final class DatabaseMigrationTests: XCTestCase {

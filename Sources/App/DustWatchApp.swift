@@ -10,7 +10,7 @@ import SwiftUI
 // the plist is missing.
 
 @main
-struct CleanNotificationMacApp: App {
+struct DustWatchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
     var body: some Scene {

@@ -4,8 +4,8 @@
 "Fan" = "风扇";
 "CPU%" = "CPU%";
 "GPU%" = "GPU%";
-"Clean Notification" = "温控监控";
-"Clean Notification Mac — sample export" = "Clean Notification Mac — 样本导出";
+"DustWatch" = "DustWatch";
+"DustWatch — sample export" = "DustWatch — 样本导出";
 "Toggle %@ series" = "显示/隐藏 %@";
 "Range" = "范围";
 "Aggregation" = "聚合";
@@ -172,7 +172,7 @@
 "Sampler is using synthetic data, not real SMC reads." = "当前采用合成数据，不是实际 SMC 读数。";
 "Open Dashboard…" = "打开主窗口…";
 "OK" = "确定";
-"Show the Clean Notification dashboard" = "打开 Clean Notification 面板";
+"Show the DustWatch dashboard" = "打开 DustWatch 面板";
 "Export Last 24 Hours as CSV…" = "导出最近24小时 CSV…";
 "Reveal Data File in Finder" = "在访达中显示数据库";
 "Generate 30-Day Demo Data…" = "生成30天演示数据…";
