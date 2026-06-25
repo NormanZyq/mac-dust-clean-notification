@@ -743,19 +743,6 @@ final class Database {
         try exec("DELETE FROM samples_daily  WHERE source = 'synthetic';")
     }
 
-    /// Delete every sample row whose timestamp is before the start
-    /// of today (local midnight). Used by the "Clear data before
-    /// today" button to wipe test data while keeping the current
-    /// day's measurements.
-    func clearBeforeToday() throws {
-        let cal = Calendar.current
-        let midnight = cal.startOfDay(for: Date())
-        let cutoff = Int64(midnight.timeIntervalSince1970)
-        try exec("DELETE FROM samples       WHERE ts < ?;", bindings: [.int64(cutoff)])
-        try exec("DELETE FROM samples_hourly WHERE bucket < ?;", bindings: [.int64(cutoff)])
-        try exec("DELETE FROM samples_daily  WHERE bucket < ?;", bindings: [.int64(cutoff)])
-    }
-
     /// Counts of rows per source, for the UI's "X real, Y synthetic"
     /// display.
     func sourceCounts() throws -> (real: Int, synthetic: Int) {

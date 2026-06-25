@@ -138,13 +138,14 @@ struct ChartSeriesConfig: Equatable {
     var showFanRPM:  Bool = true
     var showCPULoad: Bool = true
     var showGPULoad: Bool = true
+    var showCoolingLoss: Bool = true
 }
 
 /// Which series a chart is able to display. Charts whose source
 /// data lacks CPU/GPU load (e.g. hourly/daily aggregates) pass a
 /// smaller set so the toggle bar doesn't show no-op controls.
 enum SeriesKind: Hashable, CaseIterable {
-    case cpuTemp, gpuTemp, fanRPM, cpuLoad, gpuLoad
+    case cpuTemp, gpuTemp, fanRPM, cpuLoad, gpuLoad, coolingLoss
 
     var label: String {
         switch self {
@@ -153,6 +154,7 @@ enum SeriesKind: Hashable, CaseIterable {
         case .fanRPM:  return L("Fan")
         case .cpuLoad: return L("CPU%")
         case .gpuLoad: return L("GPU%")
+        case .coolingLoss: return L("Cooling")
         }
     }
 
@@ -163,13 +165,14 @@ enum SeriesKind: Hashable, CaseIterable {
         case .fanRPM:  return .green
         case .cpuLoad: return Color.orange.opacity(0.55)
         case .gpuLoad: return Color.blue.opacity(0.55)
+        case .coolingLoss: return .purple
         }
     }
 
     /// Whether this series is rendered as a dashed line in the
     /// chart body. Currently only Fan RPM, so the visual treatment
     /// matches the legend pill.
-    var isDashed: Bool { self == .fanRPM }
+    var isDashed: Bool { self == .fanRPM || self == .coolingLoss }
 }
 
 /// A row of pill-shaped toggles shown in a chart's title bar. One
@@ -231,6 +234,7 @@ struct SeriesToggleBar: View {
         case .fanRPM:  return $config.showFanRPM
         case .cpuLoad: return $config.showCPULoad
         case .gpuLoad: return $config.showGPULoad
+        case .coolingLoss: return $config.showCoolingLoss
         }
     }
 }

@@ -101,6 +101,18 @@ struct DustRiskAssessment: Equatable {
     let requiredReferenceDays: Int
 }
 
+struct CoolingCapacityPoint: Equatable, Identifiable {
+    let date: Date
+    let subsystem: ThermalFinding.Subsystem
+    let coolingLossC: Double
+    let fanDelta: Double
+    let pValue: Double
+    let sampleCount: Int
+    let ambientCorrected: Bool
+
+    var id: Date { date }
+}
+
 enum BaselineComparator {
 
     // Load is bucketed into this many levels (0..N-1) by round(load*(N-1)).
@@ -271,6 +283,153 @@ enum BaselineComparator {
         )
     }
 
+    /// Daily trend of cooling loss versus the best available cooling
+    /// reference. Each point compares a trailing `compareDays` window ending
+    /// on that local day against a fixed historical reference before the
+    /// chart's final recent window.
+    static func coolingLossTrend(database: Database, config: Config,
+                                 from fromSec: Int64, to toSec: Int64) throws -> [CoolingCapacityPoint] {
+        let compareSeconds = Int64(max(1, config.compareDays)) * 86400
+        let referenceStart = config.coolingCalibrationStartedAt ?? 0
+        let referenceEnd = toSec - compareSeconds - 1
+        guard referenceEnd > referenceStart, fromSec < toSec else { return [] }
+
+        let reference = try database.fetchRawSamplesForAnalysis(
+            from: referenceStart,
+            to: referenceEnd
+        )
+        let required = minSamplesPerBucket * 2
+        guard reference.count >= required else { return [] }
+
+        let trendSamples = try database.fetchRawSamplesForAnalysis(
+            from: max(0, fromSec - compareSeconds),
+            to: toSec
+        )
+        guard !trendSamples.isEmpty else { return [] }
+
+        let cpuBaseBuckets = bucketByLoad(
+            reference,
+            primaryLoad: { $0.cpuLoad },
+            secondaryLoad: { $0.gpuLoad },
+            temp: { $0.cpuTempC }
+        )
+        let gpuBaseBuckets = bucketByLoad(
+            reference,
+            primaryLoad: { $0.gpuLoad },
+            secondaryLoad: { $0.cpuLoad },
+            temp: { $0.gpuTempC }
+        )
+        let calendar = Calendar.current
+        let rangeEnd = Date(timeIntervalSince1970: TimeInterval(toSec))
+        var day = calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(fromSec)))
+        let totalDays = max(1, calendar.dateComponents([.day], from: day, to: rangeEnd).day ?? 1)
+        let strideDays = max(1, Int(ceil(Double(totalDays) / 366.0)))
+        var dayIndex = 0
+        var points: [CoolingCapacityPoint] = []
+
+        while day < rangeEnd {
+            let nextDay = calendar.date(byAdding: .day, value: 1, to: day)
+                ?? day.addingTimeInterval(86400)
+            defer {
+                day = nextDay
+                dayIndex += 1
+            }
+            guard dayIndex % strideDays == 0 || nextDay >= rangeEnd else {
+                continue
+            }
+            let dayEnd = min(nextDay, rangeEnd)
+            let dayEndSec = Int64(dayEnd.timeIntervalSince1970)
+            let recentStart = dayEndSec - compareSeconds
+            let recent = sliceSamples(trendSamples, from: recentStart, to: dayEndSec)
+            guard recent.count >= required,
+                  windowCoverage(samples: recent, from: recentStart, to: dayEndSec) >= minWindowCoverage else {
+                continue
+            }
+
+            let cpuPoint = coolingLossPoint(
+                subsystem: .cpu,
+                date: day,
+                baselineBuckets: cpuBaseBuckets,
+                recent: recent,
+                primaryLoad: { $0.cpuLoad },
+                secondaryLoad: { $0.gpuLoad },
+                temp: { $0.cpuTempC }
+            )
+            let gpuPoint = coolingLossPoint(
+                subsystem: .gpu,
+                date: day,
+                baselineBuckets: gpuBaseBuckets,
+                recent: recent,
+                primaryLoad: { $0.gpuLoad },
+                secondaryLoad: { $0.cpuLoad },
+                temp: { $0.gpuTempC }
+            )
+
+            if let best = [cpuPoint, gpuPoint].compactMap({ $0 })
+                .max(by: { $0.coolingLossC < $1.coolingLossC }) {
+                points.append(best)
+            }
+        }
+
+        return points
+    }
+
+    private static func coolingLossPoint(
+        subsystem: ThermalFinding.Subsystem,
+        date: Date,
+        baselineBuckets: [WorkloadBucket: [BucketedReading]],
+        recent: [Sample],
+        primaryLoad: (Sample) -> Double?,
+        secondaryLoad: (Sample) -> Double?,
+        temp: (Sample) -> Double?
+    ) -> CoolingCapacityPoint? {
+        let recBuckets = bucketByLoad(
+            recent,
+            primaryLoad: primaryLoad,
+            secondaryLoad: secondaryLoad,
+            temp: temp
+        )
+        guard let idleBucket = lowestSharedBucket(baselineBuckets, recBuckets) else {
+            return nil
+        }
+
+        let baseIdleMed = median(values(baselineBuckets[idleBucket] ?? []))
+        let recIdleMed = median(values(recBuckets[idleBucket] ?? []))
+        let sharedBuckets = Set(baselineBuckets.keys).intersection(recBuckets.keys)
+            .filter { $0.primary > idleBucket.primary }
+            .sorted()
+
+        var bestLoss: (loss: Double, sampleCount: Int)?
+        for bucket in sharedBuckets {
+            let baseTemps = baselineBuckets[bucket] ?? []
+            let recTemps = recBuckets[bucket] ?? []
+            guard baseTemps.count >= minSamplesPerBucket,
+                  recTemps.count >= minSamplesPerBucket else { continue }
+
+            let baseRise = bestObservedValues(values(baseTemps).map { $0 - baseIdleMed })
+            let recRise = bestObservedValues(values(recTemps).map { $0 - recIdleMed })
+            guard baseRise.count >= minSamplesPerBucket,
+                  recRise.count >= minSamplesPerBucket else { continue }
+
+            let loss = median(recRise) - median(baseRise)
+            let candidate = (loss: max(0, loss), sampleCount: recRise.count)
+            if bestLoss == nil || candidate.loss > bestLoss!.loss {
+                bestLoss = candidate
+            }
+        }
+
+        guard let bestLoss else { return nil }
+        return CoolingCapacityPoint(
+            date: date,
+            subsystem: subsystem,
+            coolingLossC: bestLoss.loss,
+            fanDelta: 0,
+            pValue: 1,
+            sampleCount: bestLoss.sampleCount,
+            ambientCorrected: true
+        )
+    }
+
     // MARK: - Core analysis for one subsystem
 
     private static func analyzeCandidates(
@@ -285,7 +444,26 @@ enum BaselineComparator {
             baseline, primaryLoad: primaryLoad, secondaryLoad: secondaryLoad, temp: temp)
         let recBuckets  = bucketByLoad(
             recent, primaryLoad: primaryLoad, secondaryLoad: secondaryLoad, temp: temp)
+        return analyzeCandidates(
+            subsystem: subsystem,
+            baseBuckets: baseBuckets,
+            recBuckets: recBuckets,
+            baseline: baseline,
+            recent: recent,
+            config: config,
+            primaryLoad: primaryLoad,
+            secondaryLoad: secondaryLoad
+        )
+    }
 
+    private static func analyzeCandidates(
+        subsystem: ThermalFinding.Subsystem,
+        baseBuckets: [WorkloadBucket: [BucketedReading]],
+        recBuckets: [WorkloadBucket: [BucketedReading]],
+        baseline: [Sample], recent: [Sample], config: Config,
+        primaryLoad: (Sample) -> Double?,
+        secondaryLoad: (Sample) -> Double?
+    ) -> [ThermalFinding] {
         // Idle reference = the lowest populated bucket present in BOTH
         // sets. Its median temperature stands in for "ambient + idle
         // power" and is subtracted from the samples before choosing the
@@ -617,6 +795,29 @@ enum BaselineComparator {
             return 0
         }
         return max(0, min(1, (last - first) / Double(end - start)))
+    }
+
+    private static func sliceSamples(_ samples: [Sample], from start: Int64, to end: Int64) -> [Sample] {
+        guard start <= end, !samples.isEmpty else { return [] }
+        let lower = lowerBound(samples, seconds: start)
+        let upper = lowerBound(samples, seconds: end + 1)
+        guard lower < upper else { return [] }
+        return Array(samples[lower..<upper])
+    }
+
+    private static func lowerBound(_ samples: [Sample], seconds: Int64) -> Int {
+        var low = 0
+        var high = samples.count
+        while low < high {
+            let mid = (low + high) / 2
+            let value = Int64(samples[mid].timestamp.timeIntervalSince1970)
+            if value < seconds {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        return low
     }
 
     private static func modelReadiness(

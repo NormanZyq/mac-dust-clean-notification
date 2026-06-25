@@ -57,6 +57,7 @@ struct ChartsView: View {
     @State private var samples: [Sample] = []
     @State private var hourly: [HourlyStats] = []
     @State private var daily:  [DailyStats]  = []
+    @State private var coolingTrend: [CoolingCapacityPoint] = []
     @State private var finding: ThermalFinding?
     @State private var loading: Bool = false
 
@@ -65,6 +66,7 @@ struct ChartsView: View {
     @State private var aggregation: Aggregation = .raw
     @State private var exportError: String?
     @State private var exportedURL: URL?
+    @State private var loadRequestID = UUID()
 
     /// Dashboard-wide series visibility. Stored in UserDefaults so toggles
     /// survive tab switches and the next app launch.
@@ -73,6 +75,7 @@ struct ChartsView: View {
     @AppStorage("dashboard.series.showFanRPM")  private var showFanRPM = true
     @AppStorage("dashboard.series.showCPULoad") private var showCPULoad = true
     @AppStorage("dashboard.series.showGPULoad") private var showGPULoad = true
+    @AppStorage("dashboard.series.showCoolingLoss") private var showCoolingLoss = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -255,9 +258,10 @@ struct ChartsView: View {
         case (.live, _),
              (.history, .raw):
             return [.cpuTemp, .gpuTemp, .fanRPM, .cpuLoad, .gpuLoad]
-        case (.history, .hourly),
-             (.history, .daily):
+        case (.history, .hourly):
             return [.cpuTemp, .gpuTemp, .fanRPM]
+        case (.history, .daily):
+            return [.cpuTemp, .gpuTemp, .fanRPM, .coolingLoss]
         default:
             return []
         }
@@ -269,7 +273,8 @@ struct ChartsView: View {
             showGPUTemp: showGPUTemp,
             showFanRPM: showFanRPM,
             showCPULoad: showCPULoad,
-            showGPULoad: showGPULoad
+            showGPULoad: showGPULoad,
+            showCoolingLoss: showCoolingLoss
         )
     }
 
@@ -282,6 +287,7 @@ struct ChartsView: View {
             showFanRPM = newValue.showFanRPM
             showCPULoad = newValue.showCPULoad
             showGPULoad = newValue.showGPULoad
+            showCoolingLoss = newValue.showCoolingLoss
         }
     }
 
@@ -351,7 +357,38 @@ struct ChartsView: View {
             values += data.compactMap(\.gpuTempAvg)
             values += data.compactMap(\.gpuTempPeak)
         }
+        if values.isEmpty, seriesConfig.showCoolingLoss {
+            return dailyCoolingLossDomain(coolingTrend)
+        }
         return paddedAxisDomain(values: values, fallback: 0...100, minSpan: 12)
+    }
+
+    private func dailyCoolingLossDomain(_ data: [CoolingCapacityPoint]) -> ClosedRange<Double> {
+        let values = seriesConfig.showCoolingLoss ? data.map(\.coolingLossC) : []
+        return paddedAxisDomain(
+            values: values + [0],
+            fallback: 0...5,
+            minSpan: 3,
+            clampLowerToZero: true
+        )
+    }
+
+    private func dailyCoolingLossPlotValue(
+        _ value: Double,
+        primaryDomain: ClosedRange<Double>,
+        coolingLossDomain: ClosedRange<Double>
+    ) -> Double {
+        if seriesConfig.showCPUTemp || seriesConfig.showGPUTemp {
+            return mapValue(value, from: coolingLossDomain, to: primaryDomain)
+        }
+        return value
+    }
+
+    private var dailyPrimaryAxisLabel: String {
+        if (seriesConfig.showCPUTemp || seriesConfig.showGPUTemp) || !seriesConfig.showCoolingLoss {
+            return "°C"
+        }
+        return L("Loss °C")
     }
 
     private func dailySecondaryDomain(_ data: [DailyStats]) -> ClosedRange<Double> {
@@ -854,6 +891,8 @@ struct ChartsView: View {
     private var historyDailyChart: some View {
         let primaryDomain = dailyPrimaryDomain(daily)
         let secondaryDomain = dailySecondaryDomain(daily)
+        let coolingLossDomain = dailyCoolingLossDomain(coolingTrend)
+        let coolingByDay = Dictionary(uniqueKeysWithValues: coolingTrend.map { ($0.date, $0) })
         return DualAxisChart(
             data: daily,
             dateKey: \.date,
@@ -880,6 +919,20 @@ struct ChartsView: View {
                         fractionDigits: 0
                     ))
                 }
+                if seriesConfig.showCoolingLoss, let point = coolingByDay[d.date] {
+                    rows.append(HoverRow(
+                        label: L("Cooling loss"),
+                        color: .purple,
+                        plotValue: dailyCoolingLossPlotValue(
+                            point.coolingLossC,
+                            primaryDomain: primaryDomain,
+                            coolingLossDomain: coolingLossDomain
+                        ),
+                        displayValue: point.coolingLossC,
+                        unit: "°C",
+                        fractionDigits: 1
+                    ))
+                }
                 rows.append(HoverRow(
                     label: L("Samples"),
                     color: .secondary,
@@ -894,7 +947,7 @@ struct ChartsView: View {
                 f.dateFormat = "EEE  MMM d"
                 return (f.string(from: d.date), nil)
             },
-            primaryAxisLabel: "°C",
+            primaryAxisLabel: dailyPrimaryAxisLabel,
             primaryDomain: primaryDomain,
             secondaryAxisLabel: "RPM",
             secondaryDomain: secondaryDomain
@@ -983,6 +1036,27 @@ struct ChartsView: View {
                     }
                 }
             }
+            if seriesConfig.showCoolingLoss {
+                ForEach(coolingTrend) { point in
+                    LineMark(
+                        x: .value("Day", point.date),
+                        y: .value(
+                            L("Cooling loss"),
+                            dailyCoolingLossPlotValue(
+                                point.coolingLossC,
+                                primaryDomain: primaryDomain,
+                                coolingLossDomain: coolingLossDomain
+                            )
+                        ),
+                        series: .value(L("Series"), L("Cooling loss"))
+                    )
+                    .foregroundStyle(.purple)
+                    .interpolationMethod(.monotone)
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                    .symbol(Circle())
+                    .symbolSize(24)
+                }
+            }
             if seriesConfig.showCPUTemp && shouldShowWarningRule(in: primaryDomain) {
                 RuleMark(y: .value("Warning", 75))
                     .foregroundStyle(.red.opacity(0.4))
@@ -1024,6 +1098,8 @@ struct ChartsView: View {
 
     private func load() {
         loading = true
+        let requestID = UUID()
+        loadRequestID = requestID
         let from: Date
         let to = Date()
         switch mode {
@@ -1032,27 +1108,59 @@ struct ChartsView: View {
         case .history:
             from = Date(timeIntervalSinceNow: -range.seconds)
         }
+        let requestedMode = mode
+        let requestedAggregation = aggregation
 
         DispatchQueue.global(qos: .userInitiated).async {
             let db = Sampler.shared.databaseHandle
-            let samples = (try? db.fetchSamples(
-                from: Int64(from.timeIntervalSince1970),
-                to:   Int64(to.timeIntervalSince1970))) ?? []
-            let hourly = (try? db.fetchHourlyStats(
-                from: Int64(from.timeIntervalSince1970),
-                to:   Int64(to.timeIntervalSince1970))) ?? []
-            let daily = (try? db.fetchDailyStats(
-                from: Int64(from.timeIntervalSince1970),
-                to:   Int64(to.timeIntervalSince1970))) ?? []
+            let needsSamples = requestedMode == .live
+                || (requestedMode == .history && requestedAggregation == .raw)
+            let needsHourly = requestedMode == .history && requestedAggregation == .hourly
+            let needsDaily = requestedMode == .history && requestedAggregation == .daily
+
+            let samples = needsSamples
+                ? ((try? db.fetchSamples(
+                    from: Int64(from.timeIntervalSince1970),
+                    to:   Int64(to.timeIntervalSince1970))) ?? [])
+                : []
+            let hourly = needsHourly
+                ? ((try? db.fetchHourlyStats(
+                    from: Int64(from.timeIntervalSince1970),
+                    to:   Int64(to.timeIntervalSince1970))) ?? [])
+                : []
+            let daily = needsDaily
+                ? ((try? db.fetchDailyStats(
+                    from: Int64(from.timeIntervalSince1970),
+                    to:   Int64(to.timeIntervalSince1970))) ?? [])
+                : []
             let cfg = (try? db.loadConfig()) ?? Config()
-            let finding = (try? BaselineComparator.run(database: db, config: cfg))
+            let finding = requestedMode == .compare
+                ? (try? BaselineComparator.run(database: db, config: cfg))
+                : nil
+            let shouldLoadCoolingTrend = requestedMode == .history && requestedAggregation == .daily
 
             DispatchQueue.main.async {
+                guard self.loadRequestID == requestID else { return }
                 self.samples = samples
                 self.hourly = hourly
                 self.daily = daily
+                self.coolingTrend = []
                 self.finding = finding
                 self.loading = false
+            }
+
+            guard shouldLoadCoolingTrend else { return }
+
+            let coolingTrend = (try? BaselineComparator.coolingLossTrend(
+                database: db,
+                config: cfg,
+                from: Int64(from.timeIntervalSince1970),
+                to: Int64(to.timeIntervalSince1970)
+            )) ?? []
+
+            DispatchQueue.main.async {
+                guard self.loadRequestID == requestID else { return }
+                self.coolingTrend = coolingTrend
             }
         }
     }

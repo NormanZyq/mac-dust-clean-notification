@@ -13,6 +13,8 @@ struct ConfigView: View {
     @State private var showResetConfirmation = false
     @State private var showCalibrationConfirmation = false
     @State private var showCalibrationResetConfirmation = false
+    @State private var showClearAllFirstConfirmation = false
+    @State private var showClearAllFinalConfirmation = false
 
     @State private var demoCfg: SyntheticConfig = SyntheticConfig.load()
     @State private var generating: Bool = false
@@ -122,6 +124,22 @@ struct ConfigView: View {
             }
         } message: {
             Text(L("This clears the calibration time marker only. Existing samples are kept, and the app returns to automatically learning from the best available historical cooling data."))
+        }
+        .alert(L("Clear All Data?"), isPresented: $showClearAllFirstConfirmation) {
+            Button(L("Cancel"), role: .cancel) { }
+            Button(L("Continue"), role: .destructive) {
+                showClearAllFinalConfirmation = true
+            }
+        } message: {
+            Text(L("This will delete all real and synthetic samples, rollups, and alert history from the local database. Settings are kept."))
+        }
+        .alert(L("Confirm Permanent Deletion"), isPresented: $showClearAllFinalConfirmation) {
+            Button(L("Cancel"), role: .cancel) { }
+            Button(L("Delete Everything"), role: .destructive) {
+                clearEverything()
+            }
+        } message: {
+            Text(L("This action cannot be undone. Confirm again only if you want to permanently remove all collected data."))
         }
     }
 
@@ -267,20 +285,13 @@ struct ConfigView: View {
                 Button {
                     clearSynthetic()
                 } label: {
-                    Label(L("Clear synthetic only"), systemImage: "wand.and.stars.outline")
+                    Label(L("Clear synthetic only"), systemImage: "sparkles")
                 }
                 .disabled(syntheticCount == 0 || clearingData)
-
-                Button {
-                    clearBeforeToday()
-                } label: {
-                    Label(L("Clear data before today"), systemImage: "calendar.badge.minus")
-                }
-                .disabled(clearingData)
             }
 
             Button(role: .destructive) {
-                clearEverything()
+                showClearAllFirstConfirmation = true
             } label: {
                 Label(L("Clear all data"), systemImage: "trash")
             }
@@ -288,7 +299,7 @@ struct ConfigView: View {
         } header: {
             Text(L("Data"))
         } footer: {
-            Text(L("Use \"Clear synthetic only\" to remove demo data while keeping real SMC samples. \"Clear data before today\" wipes test data from previous days. \"Clear all data\" removes everything."))
+            Text(L("Use \"Clear synthetic only\" to remove demo data while keeping real SMC samples. \"Clear all data\" removes every sample, rollup, and alert after two confirmations."))
                 .font(.caption2)
         }
     }
@@ -314,25 +325,6 @@ struct ConfigView: View {
                 DispatchQueue.main.async {
                     self.clearingData = false
                     self.genMessage = L("✓ Cleared synthetic data")
-                    self.refreshCounts()
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self.clearingData = false
-                    self.genMessage = String(format: L("✗ Clear failed: %@"), error.localizedDescription)
-                }
-            }
-        }
-    }
-
-    private func clearBeforeToday() {
-        clearingData = true
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try Sampler.shared.databaseHandle.clearBeforeToday()
-                DispatchQueue.main.async {
-                    self.clearingData = false
-                    self.genMessage = L("✓ Cleared data before today 00:00")
                     self.refreshCounts()
                 }
             } catch {

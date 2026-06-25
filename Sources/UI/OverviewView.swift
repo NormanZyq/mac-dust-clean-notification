@@ -68,7 +68,8 @@ struct OverviewView: View {
             showGPUTemp: showGPUTemp,
             showFanRPM: showFanRPM,
             showCPULoad: showCPULoad,
-            showGPULoad: showGPULoad
+            showGPULoad: showGPULoad,
+            showCoolingLoss: false
         )
     }
 
@@ -182,7 +183,7 @@ struct OverviewView: View {
             .buttonStyle(.plain)
             .foregroundStyle(color)
             .help(L("Show risk details"))
-            .popover(isPresented: $showDustRiskDetails, arrowEdge: .trailing) {
+            .popover(isPresented: $showDustRiskDetails, arrowEdge: .leading) {
                 dustRiskDetails(assessment)
                     .frame(width: 320)
                     .padding(14)
