@@ -31,6 +31,12 @@ struct OverviewView: View {
     @State private var lastRiskRefresh: Date = .distantPast
     @ObservedObject private var samplerObserver = SamplerObserver()
 
+    private static let relativeTimeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+
     /// Dashboard-wide series visibility. Stored in UserDefaults so toggles
     /// survive tab switches and the next app launch.
     @AppStorage("dashboard.series.showCPUTemp") private var showCPUTemp = true
@@ -472,7 +478,7 @@ struct OverviewView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .dashboardPanelBackground(tint: tint)
     }
 
     /// Short caption rendered below each card's sparkline. Uses the
@@ -514,6 +520,7 @@ struct OverviewView: View {
     private var sparklineCard: some View {
         ChartCard(
             title: L("Last 24 hours"),
+            tint: .orange,
             trailing: AnyView(
                 HStack(spacing: 10) {
                     SeriesToggleBar(
@@ -693,6 +700,7 @@ struct OverviewView: View {
     private var weeklyTrendCard: some View {
         ChartCard(
             title: L("Last 7 days · daily peak CPU"),
+            tint: .orange,
             trailing: AnyView(
                 Text(L("hover for details"))
                     .font(.caption2).foregroundStyle(.secondary)
@@ -910,9 +918,10 @@ struct OverviewView: View {
     // MARK: - Formatting helpers
 
     private func relativeTime(_ d: Date) -> String {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        return f.localizedString(for: d, relativeTo: Date())
+        let now = Date()
+        let elapsed = now.timeIntervalSince(d)
+        guard elapsed >= 1 else { return L("just now") }
+        return Self.relativeTimeFormatter.localizedString(for: d, relativeTo: now)
     }
 
     private func deltaString(current: Double?, previous: Double?, suffix: String = "°C") -> String? {

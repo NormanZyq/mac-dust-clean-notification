@@ -65,6 +65,7 @@
 "GPU peak" = "GPU 峰值";
 "Fan peak" = "风扇峰值";
 "Updated %@" = "已更新 %@";
+"just now" = "刚刚";
 "Live summary of CPU/GPU temperature, fan activity, and recent trends." = "实时概览 CPU/GPU 温度、风扇活动和近期趋势。";
 "Demo data is showing" = "当前显示的是演示数据";
 "Temperatures and fan RPM are synthesized, not from the SMC. Open Settings to turn this off (once SMC reads are working)." = "温度和风扇转速由模拟数据生成，未读取实际 SMC。请在 SMC 可用后前往设置关闭演示模式。";

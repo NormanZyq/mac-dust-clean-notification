@@ -65,6 +65,7 @@
 "GPU peak" = "GPU peak";
 "Fan peak" = "Fan peak";
 "Updated %@" = "Updated %@";
+"just now" = "just now";
 "Live summary of CPU/GPU temperature, fan activity, and recent trends." = "Live summary of CPU/GPU temperature, fan activity, and recent trends.";
 "Demo data is showing" = "Demo data is showing";
 "Temperatures and fan RPM are synthesized, not from the SMC. Open Settings to turn this off (once SMC reads are working)." = "Temperatures and fan RPM are synthesized, not from the SMC. Open Settings to turn this off (once SMC reads are working).";

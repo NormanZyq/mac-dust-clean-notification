@@ -883,13 +883,16 @@ enum TempColor {
 
 struct ChartCard<Content: View>: View {
     let title: String
+    let tint: Color
     let trailing: AnyView?
     let content: Content
 
     init(title: String,
+         tint: Color = .accentColor,
          trailing: AnyView? = nil,
          @ViewBuilder content: () -> Content) {
         self.title = title
+        self.tint = tint
         self.trailing = trailing
         self.content = content()
     }
@@ -905,8 +908,49 @@ struct ChartCard<Content: View>: View {
             content
         }
         .padding(14)
-        .background(Color(NSColor.controlBackgroundColor),
-                    in: RoundedRectangle(cornerRadius: 10))
+        .dashboardPanelBackground(tint: tint)
+    }
+}
+
+struct DashboardPanelBackground: ViewModifier {
+    let tint: Color
+    var cornerRadius: CGFloat = 12
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        content
+            .background {
+                shape
+                    .fill(Color(NSColor.controlBackgroundColor))
+                shape
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                tint.opacity(0.13),
+                                Color(NSColor.controlBackgroundColor).opacity(0.2),
+                                Color.white.opacity(0.04),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+            .overlay {
+                shape
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            }
+            .overlay(alignment: .topLeading) {
+                shape
+                    .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+                    .blendMode(.plusLighter)
+            }
+            .shadow(color: Color.black.opacity(0.07), radius: 9, x: 0, y: 3)
+    }
+}
+
+extension View {
+    func dashboardPanelBackground(tint: Color, cornerRadius: CGFloat = 12) -> some View {
+        modifier(DashboardPanelBackground(tint: tint, cornerRadius: cornerRadius))
     }
 }
 
